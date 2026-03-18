@@ -22,6 +22,11 @@ Build the binary:
 go build -o gyat .
 ```
 
+Install the binary to `$GOPATH/bin`:
+```sh
+go install .
+```
+
 ---
 
 ## Tests

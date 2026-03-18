@@ -32,7 +32,15 @@ submodule commands.
 
 ## Installation
 
-**From source (requires Go 1.21+):**
+**Using `go install` (recommended, requires Go 1.26+):**
+
+```sh
+go install github.com/refansa/gyat@latest
+```
+
+The binary will be placed in `$GOPATH/bin` — make sure that directory is on your `PATH`.
+
+**From source (requires Go 1.26+):**
 
 ```sh
 git clone https://github.com/refansa/gyat
