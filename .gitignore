@@ -1,0 +1,103 @@
+# Compiled binary outputs
+# - We don't want to commit built executables.
+# - Keep platform-specific binary names to be safe.
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+
+# Common build/output directories
+/bin/
+/build/
+/out/
+/dist/
+
+# Go build cache and test coverage
+coverage.out
+*.coverprofile
+
+# Go module cache (not usually committed)
+# Note: do NOT ignore go.sum or go.mod files — they should be committed.
+# The module cache is large and machine-specific.
+# If you vendor dependencies into /vendor, do NOT ignore that directory.
+pkg/mod/
+
+# If you use a workspace file locally and don't want to share it:
+# (Only ignore if you don't want to commit it — many projects DO commit go.work)
+go.work
+
+# Generated files from protoc, code generators, etc.
+# If you commit generated files, remove these lines.
+**/*_generated.go
+**/*_pb.go
+**/*_grpc.pb.go
+
+# Editor/IDE settings
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+
+# Swap/temporary files from editors
+*~
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment / secrets
+# Keep dotenv and credential files out of the repo
+.env
+.env.local
+.env.*.local
+secrets.env
+*.key
+*.pem
+
+# Logs and debug output
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Dependency directories (if applicable)
+node_modules/
+vendor/ # If you vendor dependencies intentionally, remove this line so vendor is tracked.
+
+# Tool caches
+.golangci-cache/
+.golangci-lint/
+.cache/
+.cache/
+
+# CI/CD / release artifacts
+.release/
+.goreleaser/
+dist/
+coverage/
+
+# Temporary files produced by goreleaser / installers
+*.tar.gz
+*.zip
+
+# Git submodule state (local only)
+# Do NOT ignore .gitmodules; it should be committed.
+# Some local Git clients create .git/modules - usually safe to keep but ignore local metadata:
+.git/modules/
+
+# Local binary for development (e.g. `go install` target)
+# If your project intentionally stores binaries under a directory like `bin/`, keep it ignored.
+bin/
+
+# Miscellaneous
+# IDE-specific metadata created by JetBrains Rider for Go, etc.
+.idea/
+*.iml
+
+# ensure this file itself remains tracked
+!.gitignore
