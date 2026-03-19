@@ -37,7 +37,7 @@ together from the start?!
 ## Goals
 
 - **Aggregate** multiple repositories under one roof
-- **Simplify** common submodule operations (track, add, commit, remove, update, sync)
+- **Simplify** common submodule operations (track, add, commit, remove, update, sync, list)
 - **Stay out of the way** — it is a thin layer on top of git, not a replacement
 - **Make it easy** to add or remove repositories as the project evolves
 
@@ -128,6 +128,34 @@ gyat add services/auth services/billing
 When no path is given, `gyat add` runs `git add -A` inside every submodule that
 is currently checked out, leaving clean or uninitialized submodules untouched.
 
+### `gyat commit`
+
+Commit staged changes across multiple submodules simultaneously with the same
+commit message, then record the updated submodule refs in the umbrella repository.
+
+```sh
+# Commit all submodules with staged changes, then the umbrella
+gyat commit -m "feat: add login endpoint"
+
+# Commit only specific submodules
+gyat commit -m "fix: typo" services/auth services/billing
+
+# Skip git hooks
+gyat commit -m "wip" --no-verify
+```
+
+With no path arguments, every checked-out submodule that has staged changes is
+committed, the updated submodule references are staged in the umbrella repository,
+and the umbrella itself is committed — all with the same message.
+
+With one or more path arguments, only the specified submodules are committed. The
+umbrella repository is still committed afterwards to record the new submodule SHAs.
+
+| Flag              | Description                              |
+|-------------------|------------------------------------------|
+| `-m, --message`   | Commit message (required)                |
+| `--no-verify`     | Bypass pre-commit and commit-msg hooks   |
+
 ### `gyat list`
 
 List all managed submodules with their path, tracked branch, current commit, status,
@@ -159,8 +187,11 @@ gyat remove services/auth
 gyat rm services/auth
 ```
 
-After removal, commit the resulting changes to `.gitmodules` and the index with
-`gyat commit`.
+After removal, commit the resulting changes to `.gitmodules` and the index:
+
+```sh
+gyat commit -m "chore: remove auth submodule"
+```
 
 ### `gyat update`
 

@@ -61,7 +61,7 @@ into the test repo, and call `run<Command>()` directly rather than going through
 ```
 main.go                  → calls cmd.Execute(), prints errors to stderr, exits with code 1
 cmd/root.go              → defines rootCmd, registers all subcommands in init()
-cmd/<command>.go         → one file per subcommand (add, init, list, remove, sync, update)
+cmd/<command>.go         → one file per subcommand (add, commit, init, list, remove, sync, update)
 internal/git/git.go      → the only git abstraction: Run() and RunInteractive()
 ```
 
@@ -84,6 +84,17 @@ Each command file follows the same pattern:
    delegates to `git.Run` or `git.RunInteractive`.
 3. Register flags bound to package-level vars in `func init()`.
 4. Register the command on `rootCmd` in `cmd/root.go`'s `init()`.
+
+### Shared helpers across commands
+
+Some functions are shared between command files within the `cmd` package:
+
+- `allSubmodulePaths(dir string) ([]string, error)` — reads every submodule path from
+  `.gitmodules`. Used by `add` and `commit`.
+- `hasStagedChanges(statusOut string) bool` — checks `git status --porcelain` output for
+  staged (index) changes. Defined in `commit.go`.
+- `hasWorkingTreeChanges(statusOut string) bool` — checks porcelain output for unstaged
+  working-tree changes. Defined in `add.go`.
 
 ---
 
@@ -154,6 +165,13 @@ Never use:
 
 - **`list` parses `.gitmodules` directly** via `git config -f .gitmodules` rather than relying
   on porcelain output, so it can surface URL and branch metadata alongside status.
+
+- **`commit` cascades from submodules to umbrella.** It first commits each submodule that has
+  staged changes, then stages the updated submodule refs (`git add <path>`) in the umbrella
+  repository, and finally commits the umbrella — all with the same message. When path
+  arguments are provided, only the named submodules are committed. The `runCommit` function
+  accepts `message` and `noVerify` as explicit parameters (not from global flag state) so
+  tests can run in parallel without races, following the same pattern as `runTrack`.
 
 - **New subcommands** belong in `cmd/<name>.go` and must be registered in `cmd/root.go`'s
   `init()`.
