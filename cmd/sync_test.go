@@ -35,8 +35,8 @@ func TestRunSync_WithSubmodule(t *testing.T) {
 	ac := &cobra.Command{}
 	ac.SetErr(io.Discard)
 	rel := relPath(umbrella, source)
-	if err := runAdd(umbrella, "", ac, []string{rel}); err != nil {
-		t.Fatalf("setup: runAdd: %v", err)
+	if err := runTrack(umbrella, "", ac, []string{rel}); err != nil {
+		t.Fatalf("setup: runTrack: %v", err)
 	}
 
 	sc := &cobra.Command{}
@@ -75,8 +75,8 @@ func TestRunSync_GitmodulesURLIsPreserved(t *testing.T) {
 	ac := &cobra.Command{}
 	ac.SetErr(io.Discard)
 	rel := relPath(umbrella, source)
-	if err := runAdd(umbrella, "", ac, []string{rel}); err != nil {
-		t.Fatalf("setup: runAdd: %v", err)
+	if err := runTrack(umbrella, "", ac, []string{rel}); err != nil {
+		t.Fatalf("setup: runTrack: %v", err)
 	}
 
 	sc := &cobra.Command{}
@@ -102,13 +102,13 @@ func TestRunSync_MultipleSubmodules(t *testing.T) {
 	ac.SetErr(io.Discard)
 
 	relA := relPath(umbrella, srcA)
-	if err := runAdd(umbrella, "", ac, []string{relA, "services/alpha"}); err != nil {
-		t.Fatalf("setup: add first submodule: %v", err)
+	if err := runTrack(umbrella, "", ac, []string{relA, "services/alpha"}); err != nil {
+		t.Fatalf("setup: track first submodule: %v", err)
 	}
 
 	relB := relPath(umbrella, srcB)
-	if err := runAdd(umbrella, "", ac, []string{relB, "services/beta"}); err != nil {
-		t.Fatalf("setup: add second submodule: %v", err)
+	if err := runTrack(umbrella, "", ac, []string{relB, "services/beta"}); err != nil {
+		t.Fatalf("setup: track second submodule: %v", err)
 	}
 
 	sc := &cobra.Command{}

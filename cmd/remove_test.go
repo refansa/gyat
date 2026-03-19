@@ -21,8 +21,8 @@ func TestRunRemove_HappyPath(t *testing.T) {
 
 	ac := &cobra.Command{}
 	ac.SetErr(io.Discard)
-	if err := runAdd(umbrella, "", ac, []string{relPath(umbrella, source)}); err != nil {
-		t.Fatalf("setup: runAdd: %v", err)
+	if err := runTrack(umbrella, "", ac, []string{relPath(umbrella, source)}); err != nil {
+		t.Fatalf("setup: runTrack: %v", err)
 	}
 
 	subName := filepath.Base(source)
@@ -47,8 +47,8 @@ func TestRunRemove_CleansGitmodules(t *testing.T) {
 
 	ac := &cobra.Command{}
 	ac.SetErr(io.Discard)
-	if err := runAdd(umbrella, "", ac, []string{relPath(umbrella, source)}); err != nil {
-		t.Fatalf("setup: runAdd: %v", err)
+	if err := runTrack(umbrella, "", ac, []string{relPath(umbrella, source)}); err != nil {
+		t.Fatalf("setup: runTrack: %v", err)
 	}
 
 	subName := filepath.Base(source)
@@ -73,8 +73,8 @@ func TestRunRemove_CleansModuleCache(t *testing.T) {
 
 	ac := &cobra.Command{}
 	ac.SetErr(io.Discard)
-	if err := runAdd(umbrella, "", ac, []string{relPath(umbrella, source)}); err != nil {
-		t.Fatalf("setup: runAdd: %v", err)
+	if err := runTrack(umbrella, "", ac, []string{relPath(umbrella, source)}); err != nil {
+		t.Fatalf("setup: runTrack: %v", err)
 	}
 
 	subName := filepath.Base(source)
@@ -104,8 +104,8 @@ func TestRunRemove_SubdirectoryPath(t *testing.T) {
 	dest := "services/notifications"
 	ac := &cobra.Command{}
 	ac.SetErr(io.Discard)
-	if err := runAdd(umbrella, "", ac, []string{relPath(umbrella, source), dest}); err != nil {
-		t.Fatalf("setup: runAdd with dest path: %v", err)
+	if err := runTrack(umbrella, "", ac, []string{relPath(umbrella, source), dest}); err != nil {
+		t.Fatalf("setup: runTrack with dest path: %v", err)
 	}
 
 	assertPathExists(t, filepath.Join(umbrella, dest))
@@ -146,8 +146,8 @@ func TestRunRemove_PathIsCleaned(t *testing.T) {
 
 	ac := &cobra.Command{}
 	ac.SetErr(io.Discard)
-	if err := runAdd(umbrella, "", ac, []string{relPath(umbrella, source)}); err != nil {
-		t.Fatalf("setup: runAdd: %v", err)
+	if err := runTrack(umbrella, "", ac, []string{relPath(umbrella, source)}); err != nil {
+		t.Fatalf("setup: runTrack: %v", err)
 	}
 
 	subName := filepath.Base(source)
@@ -164,10 +164,10 @@ func TestRunRemove_PathIsCleaned(t *testing.T) {
 	assertPathAbsent(t, filepath.Join(umbrella, subName))
 }
 
-// TestRunRemove_RemovesThenAdd verifies that after a submodule is removed, the
-// same path can be re-added without error — a common workflow when swapping out
+// TestRunRemove_RemovesThenTrack verifies that after a submodule is removed, the
+// same path can be re-tracked without error — a common workflow when swapping out
 // an implementation repo.
-func TestRunRemove_RemovesThenAdd(t *testing.T) {
+func TestRunRemove_RemovesThenTrack(t *testing.T) {
 	t.Parallel()
 	skipIfNoGit(t)
 
@@ -178,8 +178,8 @@ func TestRunRemove_RemovesThenAdd(t *testing.T) {
 
 	ac := &cobra.Command{}
 	ac.SetErr(io.Discard)
-	if err := runAdd(umbrella, "", ac, []string{rel}); err != nil {
-		t.Fatalf("setup: first runAdd: %v", err)
+	if err := runTrack(umbrella, "", ac, []string{rel}); err != nil {
+		t.Fatalf("setup: first runTrack: %v", err)
 	}
 
 	rc := &cobra.Command{}
@@ -188,11 +188,11 @@ func TestRunRemove_RemovesThenAdd(t *testing.T) {
 		t.Fatalf("runRemove: %v", err)
 	}
 
-	// Re-adding the same source to the same path must succeed.
+	// Re-tracking the same source to the same path must succeed.
 	ac2 := &cobra.Command{}
 	ac2.SetErr(io.Discard)
-	if err := runAdd(umbrella, "", ac2, []string{rel}); err != nil {
-		t.Fatalf("runAdd after remove: %v", err)
+	if err := runTrack(umbrella, "", ac2, []string{rel}); err != nil {
+		t.Fatalf("runTrack after remove: %v", err)
 	}
 
 	assertPathExists(t, filepath.Join(umbrella, subName))
@@ -209,8 +209,8 @@ func TestRunRemove_OutputMentionsPath(t *testing.T) {
 
 	ac := &cobra.Command{}
 	ac.SetErr(io.Discard)
-	if err := runAdd(umbrella, "", ac, []string{relPath(umbrella, source)}); err != nil {
-		t.Fatalf("setup: runAdd: %v", err)
+	if err := runTrack(umbrella, "", ac, []string{relPath(umbrella, source)}); err != nil {
+		t.Fatalf("setup: runTrack: %v", err)
 	}
 
 	subName := filepath.Base(source)

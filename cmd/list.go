@@ -37,7 +37,7 @@ func runList(dir string, cmd *cobra.Command, args []string) error {
 
 	if _, err := os.Stat(filepath.Join(dir, ".gitmodules")); os.IsNotExist(err) {
 		fmt.Fprintln(stdout, "no submodules found")
-		fmt.Fprintln(errout, "hint: use 'gyat add <repo>' to add a repository")
+		fmt.Fprintln(errout, "hint: use 'gyat track <repo>' to add a repository")
 		return nil
 	}
 
@@ -45,7 +45,7 @@ func runList(dir string, cmd *cobra.Command, args []string) error {
 	pathsOut, err := git.Run(dir, "config", "-f", ".gitmodules", "--get-regexp", `submodule\..*\.path`)
 	if err != nil || strings.TrimSpace(pathsOut) == "" {
 		fmt.Fprintln(stdout, "no submodules found")
-		fmt.Fprintln(errout, "hint: use 'gyat add <repo>' to add a repository")
+		fmt.Fprintln(errout, "hint: use 'gyat track <repo>' to add a repository")
 		return nil
 	}
 

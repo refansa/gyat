@@ -10,92 +10,107 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var addBranch string
-
 var addCmd = &cobra.Command{
-	Use:   "add <repo> [path]",
-	Short: "Add a repository as a submodule",
-	Long: `Add a repository as a git submodule under this repository.
+	Use:   "add [submodule-path...]",
+	Short: "Stage changes in submodules",
+	Long: `Stage changes in one or all submodules.
 
-The <repo> argument accepts either a remote URL or a local path:
+If no submodule paths are provided, all changes in every submodule are staged
+(equivalent to running 'git add -A' inside each one).
 
-  Remote URL  - Any URL that git understands (HTTPS, SSH, git://).
-  Local path  - An absolute or relative path to a repository on disk.
+If one or more submodule paths are provided, only those submodules are staged.`,
+	Example: `  # Stage all changes across every submodule
+  gyat add
 
-When using a local path, prefer a relative path (e.g. ../service-auth)
-over an absolute one (e.g. /home/user/service-auth). Absolute paths are
-machine-specific and will break for anyone else who clones the umbrella
-repository.
+  # Stage changes in a specific submodule
+  gyat add services/auth
 
-Optionally specify a destination [path] inside this repository where the
-submodule should live. If omitted, git will derive one from <repo>.
-
-Use --branch to track a specific branch of the submodule.`,
-	Example: `  # Remote URLs
-  gyat add https://github.com/org/service-auth
-  gyat add https://github.com/org/service-auth services/auth
-  gyat add --branch main https://github.com/org/service-auth services/auth
-
-  # Local paths (relative — portable)
-  gyat add ../service-auth
-  gyat add ../service-auth services/auth
-
-  # Local paths (absolute — machine-specific, use with care)
-  gyat add /home/user/projects/service-auth services/auth`,
-	Args: cobra.RangeArgs(1, 2),
+  # Stage changes in multiple specific submodules
+  gyat add services/auth services/billing`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		dir, err := os.Getwd()
 		if err != nil {
 			return fmt.Errorf("getting working directory: %w", err)
 		}
-		return runAdd(dir, addBranch, cmd, args)
+		return runAdd(dir, cmd, args)
 	},
 }
 
-// isLocalPath reports whether s looks like a local filesystem path rather than
-// a remote URL. Remote URLs contain "://" (https, git, ssh, file) or use the
-// SCP-style git@ syntax.
-func isLocalPath(s string) bool {
-	return !strings.Contains(s, "://") && !strings.HasPrefix(s, "git@")
-}
+// runAdd stages all working-tree changes inside each target submodule.
+// When args is empty every registered submodule is targeted; otherwise only
+// the submodules whose paths are listed in args are staged.
+func runAdd(dir string, cmd *cobra.Command, args []string) error {
+	targets, err := resolveSubmodulePaths(dir, args)
+	if err != nil {
+		return err
+	}
 
-// runAdd adds a repository as a submodule. branch may be empty to track the
-// default branch. Accepting branch explicitly (rather than reading the
-// package-level addBranch flag) allows tests to run in parallel without
-// racing on shared flag state.
-func runAdd(dir, branch string, cmd *cobra.Command, args []string) error {
-	source := args[0]
+	if len(targets) == 0 {
+		fmt.Fprintln(cmd.ErrOrStderr(), "no submodules found")
+		fmt.Fprintln(cmd.ErrOrStderr(), "hint: use 'gyat track <repo>' to add a repository")
+		return nil
+	}
 
-	// Warn when an absolute local path is used — it will not work on other machines.
-	if filepath.IsAbs(source) {
-		if _, err := os.Stat(source); err == nil {
-			fmt.Fprintf(cmd.ErrOrStderr(), "warning: '%s' is an absolute path and will only work on this machine\n", source)
-			fmt.Fprintf(cmd.ErrOrStderr(), "hint: use a relative path (e.g. ../%s) for portability\n", filepath.Base(source))
+	staged := 0
+	for _, path := range targets {
+		subDir := filepath.Join(dir, path)
+		if _, err := os.Stat(subDir); os.IsNotExist(err) {
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: submodule '%s' is not checked out, skipping\n", path)
+			continue
 		}
+
+		// Skip submodules with nothing to stage.
+		statusOut, err := git.Run(subDir, "status", "--porcelain")
+		if err != nil {
+			return fmt.Errorf("checking status of '%s': %w", path, err)
+		}
+		if strings.TrimSpace(statusOut) == "" {
+			continue
+		}
+
+		fmt.Fprintf(cmd.ErrOrStderr(), "staging '%s'...\n", path)
+		if _, err := git.Run(subDir, "add", "-A"); err != nil {
+			return fmt.Errorf("staging '%s': %w", path, err)
+		}
+		staged++
 	}
 
-	// Git 2.38.1+ blocks local file transport by default (CVE-2022-39253).
-	// Prepend -c protocol.file.allow=always so local paths work transparently.
-	var gitArgs []string
-	if isLocalPath(source) {
-		gitArgs = []string{"-c", "protocol.file.allow=always", "submodule", "add"}
-	} else {
-		gitArgs = []string{"submodule", "add"}
+	if staged == 0 {
+		fmt.Fprintln(cmd.ErrOrStderr(), "nothing to stage")
 	}
 
-	if branch != "" {
-		gitArgs = append(gitArgs, "--branch", branch)
-	}
-
-	gitArgs = append(gitArgs, source)
-
-	if len(args) == 2 {
-		gitArgs = append(gitArgs, args[1])
-	}
-
-	return git.RunInteractive(dir, gitArgs...)
+	return nil
 }
 
-func init() {
-	addCmd.Flags().StringVarP(&addBranch, "branch", "b", "", "Branch of the submodule repository to track")
+// resolveSubmodulePaths returns the submodule paths to operate on.
+// When args is non-empty it is returned as-is; otherwise all paths registered
+// in .gitmodules are returned.
+func resolveSubmodulePaths(dir string, args []string) ([]string, error) {
+	if len(args) > 0 {
+		return args, nil
+	}
+	return allSubmodulePaths(dir)
+}
+
+// allSubmodulePaths reads every submodule path from .gitmodules.
+// Returns nil (not an error) when .gitmodules is absent or empty.
+func allSubmodulePaths(dir string) ([]string, error) {
+	pathsOut, err := git.Run(dir, "config", "-f", ".gitmodules", "--get-regexp", `submodule\..*\.path`)
+	if err != nil || strings.TrimSpace(pathsOut) == "" {
+		return nil, nil
+	}
+
+	var paths []string
+	for _, line := range strings.Split(pathsOut, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.Fields(line)
+		if len(parts) != 2 {
+			continue
+		}
+		paths = append(paths, parts[1])
+	}
+	return paths, nil
 }

@@ -40,7 +40,7 @@ func runInit(dir string, cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to initialize submodules: %w", err)
 		}
 	} else {
-		fmt.Fprintln(cmd.ErrOrStderr(), "hint: use 'gyat add <repo> [path]' to start adding repositories")
+		fmt.Fprintln(cmd.ErrOrStderr(), "hint: use 'gyat track <repo> [path]' to start adding repositories")
 	}
 
 	return nil

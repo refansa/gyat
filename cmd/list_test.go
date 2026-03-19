@@ -31,7 +31,7 @@ func TestRunList_NoGitmodules(t *testing.T) {
 	}
 }
 
-// TestRunList_WithSubmodule verifies that a submodule added via runAdd appears
+// TestRunList_WithSubmodule verifies that a submodule added via runTrack appears
 // in the table output with its path, URL, and a status column.
 func TestRunList_WithSubmodule(t *testing.T) {
 	t.Parallel()
@@ -41,8 +41,8 @@ func TestRunList_WithSubmodule(t *testing.T) {
 
 	ac := &cobra.Command{}
 	ac.SetErr(new(bytes.Buffer))
-	if err := runAdd(umbrella, "", ac, []string{relPath(umbrella, source)}); err != nil {
-		t.Fatalf("setup: runAdd: %v", err)
+	if err := runTrack(umbrella, "", ac, []string{relPath(umbrella, source)}); err != nil {
+		t.Fatalf("setup: runTrack: %v", err)
 	}
 
 	var stdout bytes.Buffer
@@ -69,8 +69,8 @@ func TestRunList_HeaderIsPresent(t *testing.T) {
 
 	ac := &cobra.Command{}
 	ac.SetErr(new(bytes.Buffer))
-	if err := runAdd(umbrella, "", ac, []string{relPath(umbrella, source)}); err != nil {
-		t.Fatalf("setup: runAdd: %v", err)
+	if err := runTrack(umbrella, "", ac, []string{relPath(umbrella, source)}); err != nil {
+		t.Fatalf("setup: runTrack: %v", err)
 	}
 
 	var stdout bytes.Buffer
@@ -99,8 +99,8 @@ func TestRunList_ShowsURL(t *testing.T) {
 
 	ac := &cobra.Command{}
 	ac.SetErr(new(bytes.Buffer))
-	if err := runAdd(umbrella, "", ac, []string{relPath(umbrella, source)}); err != nil {
-		t.Fatalf("setup: runAdd: %v", err)
+	if err := runTrack(umbrella, "", ac, []string{relPath(umbrella, source)}); err != nil {
+		t.Fatalf("setup: runTrack: %v", err)
 	}
 
 	var stdout bytes.Buffer
@@ -128,11 +128,11 @@ func TestRunList_DefaultBranchLabel(t *testing.T) {
 
 	umbrella, source := newTestSetup(t, "service-notifications")
 
-	// Add without --branch so no branch is recorded in .gitmodules.
+	// Track without --branch so no branch is recorded in .gitmodules.
 	ac := &cobra.Command{}
 	ac.SetErr(new(bytes.Buffer))
-	if err := runAdd(umbrella, "", ac, []string{relPath(umbrella, source)}); err != nil {
-		t.Fatalf("setup: runAdd: %v", err)
+	if err := runTrack(umbrella, "", ac, []string{relPath(umbrella, source)}); err != nil {
+		t.Fatalf("setup: runTrack: %v", err)
 	}
 
 	var stdout bytes.Buffer
@@ -161,8 +161,8 @@ func TestRunList_TrackedBranchShown(t *testing.T) {
 
 	ac := &cobra.Command{}
 	ac.SetErr(new(bytes.Buffer))
-	if err := runAdd(umbrella, branch, ac, []string{relPath(umbrella, source)}); err != nil {
-		t.Fatalf("setup: runAdd --branch %s: %v", branch, err)
+	if err := runTrack(umbrella, branch, ac, []string{relPath(umbrella, source)}); err != nil {
+		t.Fatalf("setup: runTrack --branch %s: %v", branch, err)
 	}
 
 	var stdout bytes.Buffer
@@ -190,11 +190,11 @@ func TestRunList_MultipleSubmodules(t *testing.T) {
 
 	ac := &cobra.Command{}
 	ac.SetErr(new(bytes.Buffer))
-	if err := runAdd(umbrella, "", ac, []string{relPath(umbrella, source1), "service-users"}); err != nil {
-		t.Fatalf("setup: runAdd service-users: %v", err)
+	if err := runTrack(umbrella, "", ac, []string{relPath(umbrella, source1), "service-users"}); err != nil {
+		t.Fatalf("setup: runTrack service-users: %v", err)
 	}
-	if err := runAdd(umbrella, "", ac, []string{relPath(umbrella, source2), "service-orders"}); err != nil {
-		t.Fatalf("setup: runAdd service-orders: %v", err)
+	if err := runTrack(umbrella, "", ac, []string{relPath(umbrella, source2), "service-orders"}); err != nil {
+		t.Fatalf("setup: runTrack service-orders: %v", err)
 	}
 
 	var stdout bytes.Buffer
@@ -223,8 +223,8 @@ func TestRunList_StatusColumn(t *testing.T) {
 
 	ac := &cobra.Command{}
 	ac.SetErr(new(bytes.Buffer))
-	if err := runAdd(umbrella, "", ac, []string{relPath(umbrella, source)}); err != nil {
-		t.Fatalf("setup: runAdd: %v", err)
+	if err := runTrack(umbrella, "", ac, []string{relPath(umbrella, source)}); err != nil {
+		t.Fatalf("setup: runTrack: %v", err)
 	}
 
 	var stdout bytes.Buffer

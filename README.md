@@ -26,7 +26,7 @@ submodule commands.
 ## Goals
 
 - **Aggregate** multiple repositories under one roof
-- **Simplify** common submodule operations (add, remove, update, sync)
+- **Simplify** common submodule operations (track, add, commit, remove, update, sync)
 - **Stay out of the way** — it is a thin layer on top of git, not a replacement
 - **Make it easy** to add or remove repositories as the project evolves
 
@@ -77,26 +77,45 @@ automatically.
 gyat init
 ```
 
-### `gyat add`
+### `gyat track`
 
-Add a repository as a submodule. Accepts both remote URLs and local paths.
+Register a repository as a submodule. Accepts both remote URLs and local paths.
 
 ```sh
 # Remote URL
-gyat add https://github.com/org/service-auth
-gyat add https://github.com/org/service-auth services/auth
+gyat track https://github.com/org/service-auth
+gyat track https://github.com/org/service-auth services/auth
 
 # Track a specific branch
-gyat add --branch main https://github.com/org/service-auth services/auth
+gyat track --branch main https://github.com/org/service-auth services/auth
 
 # Local path (relative — portable across machines)
-gyat add ../service-auth
-gyat add ../service-auth services/auth
+gyat track ../service-auth
+gyat track ../service-auth services/auth
 ```
 
 When using a local path, prefer a **relative** path (e.g. `../service-auth`) over an
 absolute one. Absolute paths are machine-specific and will break for anyone else who
 clones the umbrella repository.
+
+### `gyat add`
+
+Stage changes in one or all submodules. Mirrors `git add` but operates across
+every registered submodule at once.
+
+```sh
+# Stage all changes in every submodule
+gyat add
+
+# Stage changes in a specific submodule
+gyat add services/auth
+
+# Stage changes in multiple specific submodules
+gyat add services/auth services/billing
+```
+
+When no path is given, `gyat add` runs `git add -A` inside every submodule that
+is currently checked out, leaving clean or uninitialized submodules untouched.
 
 ### `gyat list`
 
@@ -129,7 +148,8 @@ gyat remove services/auth
 gyat rm services/auth
 ```
 
-After removal, commit the resulting changes to `.gitmodules` and the index.
+After removal, commit the resulting changes to `.gitmodules` and the index with
+`gyat commit`.
 
 ### `gyat update`
 

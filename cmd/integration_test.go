@@ -12,7 +12,7 @@ import (
 )
 
 // TestIntegration_FullWorkflow exercises the entire gyat lifecycle in order:
-// init → add → list → remove. It is the closest thing to a real user session
+// init → track → list → remove. It is the closest thing to a real user session
 // without touching the network.
 func TestIntegration_FullWorkflow(t *testing.T) {
 	t.Parallel()
@@ -29,13 +29,13 @@ func TestIntegration_FullWorkflow(t *testing.T) {
 	}
 	assertPathExists(t, filepath.Join(umbrella, ".git"))
 
-	// ── 2. gyat add ───────────────────────────────────────────────────────────
+	// ── 2. gyat track ─────────────────────────────────────────────────────────
 
 	rel := relPath(umbrella, source)
 	ac := &cobra.Command{}
 	ac.SetErr(io.Discard)
-	if err := runAdd(umbrella, "", ac, []string{rel}); err != nil {
-		t.Fatalf("step 2 (gyat add %s): %v", rel, err)
+	if err := runTrack(umbrella, "", ac, []string{rel}); err != nil {
+		t.Fatalf("step 2 (gyat track %s): %v", rel, err)
 	}
 	assertPathExists(t, filepath.Join(umbrella, ".gitmodules"))
 	assertPathExists(t, filepath.Join(umbrella, "my-service"))
@@ -71,10 +71,10 @@ func TestIntegration_FullWorkflow(t *testing.T) {
 	assertFileNotContains(t, filepath.Join(umbrella, ".gitmodules"), "my-service")
 }
 
-// TestIntegration_AddWithExplicitDestination verifies that gyat add correctly
+// TestIntegration_TrackWithExplicitDestination verifies that gyat track correctly
 // places the submodule under the requested destination path instead of the
 // default one derived from the repo name.
-func TestIntegration_AddWithExplicitDestination(t *testing.T) {
+func TestIntegration_TrackWithExplicitDestination(t *testing.T) {
 	t.Parallel()
 	skipIfNoGit(t)
 
@@ -85,17 +85,17 @@ func TestIntegration_AddWithExplicitDestination(t *testing.T) {
 
 	ac := &cobra.Command{}
 	ac.SetErr(io.Discard)
-	if err := runAdd(umbrella, "", ac, []string{rel, dest}); err != nil {
-		t.Fatalf("gyat add with destination: %v", err)
+	if err := runTrack(umbrella, "", ac, []string{rel, dest}); err != nil {
+		t.Fatalf("gyat track with destination: %v", err)
 	}
 
 	assertPathExists(t, filepath.Join(umbrella, "services", "auth"))
 	assertFileContains(t, filepath.Join(umbrella, ".gitmodules"), "services/auth")
 }
 
-// TestIntegration_AddWithBranch verifies that the --branch flag is recorded in
+// TestIntegration_TrackWithBranch verifies that the --branch flag is recorded in
 // .gitmodules so that gyat update later tracks the right branch.
-func TestIntegration_AddWithBranch(t *testing.T) {
+func TestIntegration_TrackWithBranch(t *testing.T) {
 	t.Parallel()
 	skipIfNoGit(t)
 
@@ -108,16 +108,16 @@ func TestIntegration_AddWithBranch(t *testing.T) {
 	ac := &cobra.Command{}
 	ac.SetErr(io.Discard)
 	rel := relPath(umbrella, source)
-	if err := runAdd(umbrella, "main", ac, []string{rel}); err != nil {
-		t.Fatalf("gyat add --branch main: %v", err)
+	if err := runTrack(umbrella, "main", ac, []string{rel}); err != nil {
+		t.Fatalf("gyat track --branch main: %v", err)
 	}
 
 	assertFileContains(t, filepath.Join(umbrella, ".gitmodules"), "branch = main")
 }
 
-// TestIntegration_AddMultipleSubmodules verifies that gyat list shows all
-// registered submodules when more than one has been added.
-func TestIntegration_AddMultipleSubmodules(t *testing.T) {
+// TestIntegration_TrackMultipleSubmodules verifies that gyat list shows all
+// registered submodules when more than one has been tracked.
+func TestIntegration_TrackMultipleSubmodules(t *testing.T) {
 	t.Parallel()
 	skipIfNoGit(t)
 
@@ -162,11 +162,11 @@ func TestIntegration_AddMultipleSubmodules(t *testing.T) {
 
 	ac := &cobra.Command{}
 	ac.SetErr(io.Discard)
-	if err := runAdd(umbrella, "", ac, []string{"../svc-a"}); err != nil {
-		t.Fatalf("add svc-a: %v", err)
+	if err := runTrack(umbrella, "", ac, []string{"../svc-a"}); err != nil {
+		t.Fatalf("track svc-a: %v", err)
 	}
-	if err := runAdd(umbrella, "", ac, []string{"../svc-b"}); err != nil {
-		t.Fatalf("add svc-b: %v", err)
+	if err := runTrack(umbrella, "", ac, []string{"../svc-b"}); err != nil {
+		t.Fatalf("track svc-b: %v", err)
 	}
 
 	var listOut bytes.Buffer
@@ -185,9 +185,9 @@ func TestIntegration_AddMultipleSubmodules(t *testing.T) {
 	}
 }
 
-// TestIntegration_RemoveThenReAdd verifies that a submodule can be removed and
-// then re-added cleanly with no leftover state from the first addition.
-func TestIntegration_RemoveThenReAdd(t *testing.T) {
+// TestIntegration_RemoveThenReTrack verifies that a submodule can be removed and
+// then re-tracked cleanly with no leftover state from the first addition.
+func TestIntegration_RemoveThenReTrack(t *testing.T) {
 	t.Parallel()
 	skipIfNoGit(t)
 
@@ -198,9 +198,9 @@ func TestIntegration_RemoveThenReAdd(t *testing.T) {
 	ac := &cobra.Command{}
 	ac.SetErr(io.Discard)
 
-	// First addition.
-	if err := runAdd(umbrella, "", ac, []string{rel}); err != nil {
-		t.Fatalf("first add: %v", err)
+	// First track.
+	if err := runTrack(umbrella, "", ac, []string{rel}); err != nil {
+		t.Fatalf("first track: %v", err)
 	}
 
 	// Remove it.
@@ -213,9 +213,9 @@ func TestIntegration_RemoveThenReAdd(t *testing.T) {
 	assertPathAbsent(t, filepath.Join(umbrella, "notifications"))
 	assertPathAbsent(t, filepath.Join(umbrella, ".git", "modules", "notifications"))
 
-	// Re-add it — must succeed without leftover state causing a conflict.
-	if err := runAdd(umbrella, "", ac, []string{rel}); err != nil {
-		t.Fatalf("re-add after remove: %v", err)
+	// Re-track it — must succeed without leftover state causing a conflict.
+	if err := runTrack(umbrella, "", ac, []string{rel}); err != nil {
+		t.Fatalf("re-track after remove: %v", err)
 	}
 
 	assertPathExists(t, filepath.Join(umbrella, "notifications"))
@@ -260,7 +260,7 @@ func TestIntegration_RemoveNonExistentSubmodule(t *testing.T) {
 	}
 }
 
-// TestIntegration_AbsolutePathWarning verifies that adding a submodule via an
+// TestIntegration_AbsolutePathWarning verifies that tracking a submodule via an
 // absolute local path still works but prints a portability warning to stderr.
 func TestIntegration_AbsolutePathWarning(t *testing.T) {
 	t.Parallel()
@@ -275,7 +275,7 @@ func TestIntegration_AbsolutePathWarning(t *testing.T) {
 	// source is already an absolute path.
 	// Ignore the error: on some git versions the add may also fail with a
 	// security error for absolute paths; we are only testing the warning.
-	_ = runAdd(umbrella, "", ac, []string{source})
+	_ = runTrack(umbrella, "", ac, []string{source})
 
 	if !strings.Contains(stderrBuf.String(), "absolute path") {
 		t.Errorf("expected portability warning about absolute path in stderr\ngot: %q", stderrBuf.String())

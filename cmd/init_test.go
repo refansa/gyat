@@ -45,7 +45,7 @@ func TestRunInit_AlreadyAGitRepo(t *testing.T) {
 }
 
 // TestRunInit_PrintsReadyMessage verifies that when there is no .gitmodules
-// file, the output tells the user to run gyat add.
+// file, the output tells the user to run gyat track.
 func TestRunInit_PrintsReadyMessage(t *testing.T) {
 	t.Parallel()
 	skipIfNoGit(t)
@@ -59,8 +59,8 @@ func TestRunInit_PrintsReadyMessage(t *testing.T) {
 		t.Errorf("runInit: %v", err)
 	}
 
-	if !strings.Contains(stderrBuf.String(), "gyat add") {
-		t.Errorf("expected hint to mention 'gyat add' on stderr, got:\n%s", stderrBuf.String())
+	if !strings.Contains(stderrBuf.String(), "gyat track") {
+		t.Errorf("expected hint to mention 'gyat track' on stderr, got:\n%s", stderrBuf.String())
 	}
 }
 
@@ -74,12 +74,12 @@ func TestRunInit_WithGitmodules(t *testing.T) {
 	// Build a full setup: umbrella with one committed submodule, then clone it.
 	umbrella, source := newTestSetup(t, "service-auth")
 
-	// Add and commit the submodule in the umbrella repo.
+	// Track and commit the submodule in the umbrella repo.
 	rel := relPath(umbrella, source)
 	addC := &cobra.Command{}
 	addC.SetErr(io.Discard)
-	if err := runAdd(umbrella, "", addC, []string{rel}); err != nil {
-		t.Fatalf("setup: runAdd: %v", err)
+	if err := runTrack(umbrella, "", addC, []string{rel}); err != nil {
+		t.Fatalf("setup: runTrack: %v", err)
 	}
 	runGitIn(t, umbrella, "commit", "-m", "add submodule")
 

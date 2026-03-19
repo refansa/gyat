@@ -31,8 +31,9 @@ func TestRunUpdate_AllSubmodules(t *testing.T) {
 	umbrella, source := newTestSetup(t, "service-update")
 
 	rel := relPath(umbrella, source)
-	if err := runAdd(umbrella, "", &cobra.Command{}, []string{rel}); err != nil {
-		t.Fatalf("setup: runAdd: %v", err)
+	ac := &cobra.Command{}
+	if err := runTrack(umbrella, "", ac, []string{rel}); err != nil {
+		t.Fatalf("setup: runTrack: %v", err)
 	}
 
 	// The submodule is already at the latest commit, so update is a no-op —
@@ -52,8 +53,9 @@ func TestRunUpdate_SpecificPath(t *testing.T) {
 	umbrella, source := newTestSetup(t, "service-specific")
 
 	rel := relPath(umbrella, source)
-	if err := runAdd(umbrella, "", &cobra.Command{}, []string{rel}); err != nil {
-		t.Fatalf("setup: runAdd: %v", err)
+	ac := &cobra.Command{}
+	if err := runTrack(umbrella, "", ac, []string{rel}); err != nil {
+		t.Fatalf("setup: runTrack: %v", err)
 	}
 
 	subName := filepath.Base(source)
@@ -72,8 +74,9 @@ func TestRunUpdate_NewCommitIsPickedUp(t *testing.T) {
 	umbrella, source := newTestSetup(t, "service-ahead")
 
 	rel := relPath(umbrella, source)
-	if err := runAdd(umbrella, "", &cobra.Command{}, []string{rel}); err != nil {
-		t.Fatalf("setup: runAdd: %v", err)
+	ac := &cobra.Command{}
+	if err := runTrack(umbrella, "", ac, []string{rel}); err != nil {
+		t.Fatalf("setup: runTrack: %v", err)
 	}
 
 	subName := filepath.Base(source)
