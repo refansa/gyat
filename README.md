@@ -25,14 +25,14 @@ submodule commands.
 
 ### I meant, what with the funny name?
 
-Ah, of course, that is the most important bit. Initially I was thinking about naming
-the project as "Yet Another Git Tracker" (yagt). But it didn't roll well off the tongue
-and it felt like a little bit more awkward to type as a command. Upon a closer look
-at the abbreviation, I could rearrange it to make a funny little gag name "gyat" 
-(minus the other 't'). It just so happened that I could easily come up with the project's
-full name immediately "Git Your Ass Together" because I always thought that these 
-repositories are really a big pain in the ass. Why can't they just be bundled
-together from the start?!
+Ah, of course — that's the most important bit. Initially I considered naming 
+the project "Yet Another Git Tracker" (yagt), but it didn't roll well off 
+the tongue and felt a bit awkward to type as a command. Upon closer inspection
+of the abbreviation, I rearranged it into the joking little name "gyat" 
+(dropping the second 't'). I immediately came up with the project's full name, 
+"Git Your Ass Together," because I always thought these repositories are a big pain 
+in the ass. Why can't they just be bundled together from the start?!
+
 
 ## Goals
 
