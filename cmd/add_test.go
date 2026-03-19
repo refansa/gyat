@@ -50,6 +50,213 @@ func stagedFilesInDir(t *testing.T, dir string) string {
 }
 
 // ---------------------------------------------------------------------------
+// Unit tests — hasWorkingTreeChanges
+// ---------------------------------------------------------------------------
+
+// TestHasWorkingTreeChanges_Empty verifies that an empty status output is
+// treated as having no working-tree changes.
+func TestHasWorkingTreeChanges_Empty(t *testing.T) {
+	t.Parallel()
+	if hasWorkingTreeChanges("") {
+		t.Error("expected false for empty status output")
+	}
+}
+
+// TestHasWorkingTreeChanges_StagedOnly verifies that lines where Y=' '
+// (index-only change, working tree clean) do not trigger a true result.
+func TestHasWorkingTreeChanges_StagedOnly(t *testing.T) {
+	t.Parallel()
+	// "A  file" → X='A', Y=' ': staged new file, working tree matches index.
+	out := "A  .gitmodules\nA  services/auth\n"
+	if hasWorkingTreeChanges(out) {
+		t.Errorf("expected false for staged-only output\ninput: %q", out)
+	}
+}
+
+// TestHasWorkingTreeChanges_Untracked verifies that an untracked file (Y='?')
+// is detected as a working-tree change.
+func TestHasWorkingTreeChanges_Untracked(t *testing.T) {
+	t.Parallel()
+	out := "?? new_file.go\n"
+	if !hasWorkingTreeChanges(out) {
+		t.Errorf("expected true for untracked file\ninput: %q", out)
+	}
+}
+
+// TestHasWorkingTreeChanges_ModifiedInWorkingTree verifies that a file
+// modified in the working tree (Y='M') is detected.
+func TestHasWorkingTreeChanges_ModifiedInWorkingTree(t *testing.T) {
+	t.Parallel()
+	out := " M main.go\n"
+	if !hasWorkingTreeChanges(out) {
+		t.Errorf("expected true for working-tree modification\ninput: %q", out)
+	}
+}
+
+// TestHasWorkingTreeChanges_DeletedInWorkingTree verifies that a file
+// deleted in the working tree (Y='D') is detected.
+func TestHasWorkingTreeChanges_DeletedInWorkingTree(t *testing.T) {
+	t.Parallel()
+	out := " D old_file.go\n"
+	if !hasWorkingTreeChanges(out) {
+		t.Errorf("expected true for working-tree deletion\ninput: %q", out)
+	}
+}
+
+// TestHasWorkingTreeChanges_StagedAndModified verifies that a file staged as
+// new but also modified again in the working tree (e.g. "AM") is detected.
+func TestHasWorkingTreeChanges_StagedAndModified(t *testing.T) {
+	t.Parallel()
+	out := "AM handler.go\n"
+	if !hasWorkingTreeChanges(out) {
+		t.Errorf("expected true for staged-and-modified file\ninput: %q", out)
+	}
+}
+
+// TestHasWorkingTreeChanges_MixedStagedAndUntracked verifies that a mix of
+// staged-only and untracked lines correctly returns true.
+func TestHasWorkingTreeChanges_MixedStagedAndUntracked(t *testing.T) {
+	t.Parallel()
+	out := "A  .gitmodules\n?? scratch.txt\n"
+	if !hasWorkingTreeChanges(out) {
+		t.Errorf("expected true when output includes an untracked file\ninput: %q", out)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Unit tests — classifyArgs
+// ---------------------------------------------------------------------------
+
+// TestClassifyArgs_NoArgs verifies that empty input produces empty outputs.
+func TestClassifyArgs_NoArgs(t *testing.T) {
+	t.Parallel()
+	rootArgs, subTargets := classifyArgs([]string{"services/auth"}, nil)
+	if len(rootArgs) != 0 {
+		t.Errorf("rootArgs = %v, want empty", rootArgs)
+	}
+	if len(subTargets) != 0 {
+		t.Errorf("subTargets = %v, want empty", subTargets)
+	}
+}
+
+// TestClassifyArgs_RootFile verifies that a path outside any submodule is
+// placed in rootArgs.
+func TestClassifyArgs_RootFile(t *testing.T) {
+	t.Parallel()
+	rootArgs, subTargets := classifyArgs([]string{"services/auth"}, []string{"README.md"})
+	if len(rootArgs) != 1 || rootArgs[0] != "README.md" {
+		t.Errorf("rootArgs = %v, want [README.md]", rootArgs)
+	}
+	if len(subTargets) != 0 {
+		t.Errorf("subTargets = %v, want empty", subTargets)
+	}
+}
+
+// TestClassifyArgs_ExactSubmoduleMatch verifies that a path equal to a
+// submodule root sets stageAll=true.
+func TestClassifyArgs_ExactSubmoduleMatch(t *testing.T) {
+	t.Parallel()
+	_, subTargets := classifyArgs([]string{"services/auth"}, []string{"services/auth"})
+	stage, ok := subTargets["services/auth"]
+	if !ok {
+		t.Fatal("expected entry for services/auth in subTargets")
+	}
+	if !stage.stageAll {
+		t.Error("expected stageAll=true for exact submodule match")
+	}
+}
+
+// TestClassifyArgs_FileInsideSubmodule verifies that a path inside a submodule
+// directory is routed as a specific file (stageAll=false).
+func TestClassifyArgs_FileInsideSubmodule(t *testing.T) {
+	t.Parallel()
+	_, subTargets := classifyArgs([]string{"services/auth"}, []string{"services/auth/handler.go"})
+	stage, ok := subTargets["services/auth"]
+	if !ok {
+		t.Fatal("expected entry for services/auth in subTargets")
+	}
+	if stage.stageAll {
+		t.Error("expected stageAll=false for file-inside-submodule")
+	}
+	if len(stage.files) != 1 || stage.files[0] != "handler.go" {
+		t.Errorf("files = %v, want [handler.go]", stage.files)
+	}
+}
+
+// TestClassifyArgs_MultipleFilesInsideSameSubmodule verifies that multiple
+// file paths inside the same submodule are collected together.
+func TestClassifyArgs_MultipleFilesInsideSameSubmodule(t *testing.T) {
+	t.Parallel()
+	args := []string{"services/auth/handler.go", "services/auth/config.go"}
+	_, subTargets := classifyArgs([]string{"services/auth"}, args)
+	stage, ok := subTargets["services/auth"]
+	if !ok {
+		t.Fatal("expected entry for services/auth")
+	}
+	if stage.stageAll {
+		t.Error("expected stageAll=false")
+	}
+	if len(stage.files) != 2 {
+		t.Fatalf("files = %v, want 2 entries", stage.files)
+	}
+	fileSet := map[string]bool{stage.files[0]: true, stage.files[1]: true}
+	for _, want := range []string{"handler.go", "config.go"} {
+		if !fileSet[want] {
+			t.Errorf("files missing %q, got %v", want, stage.files)
+		}
+	}
+}
+
+// TestClassifyArgs_ExactMatchSupersedesFiles verifies that once a submodule is
+// targeted by its root path (stageAll=true), subsequent file paths inside the
+// same submodule are ignored.
+func TestClassifyArgs_ExactMatchSupersedesFiles(t *testing.T) {
+	t.Parallel()
+	// File first, then the submodule root — stageAll should win.
+	args := []string{"services/auth/handler.go", "services/auth"}
+	_, subTargets := classifyArgs([]string{"services/auth"}, args)
+	stage, ok := subTargets["services/auth"]
+	if !ok {
+		t.Fatal("expected entry for services/auth")
+	}
+	if !stage.stageAll {
+		t.Error("expected stageAll=true when submodule root is explicitly listed")
+	}
+}
+
+// TestClassifyArgs_MixedRootAndSubmodule verifies that a mixed argument list
+// is correctly split between rootArgs and per-submodule targets.
+func TestClassifyArgs_MixedRootAndSubmodule(t *testing.T) {
+	t.Parallel()
+	subs := []string{"services/auth", "services/billing"}
+	args := []string{"README.md", "services/auth", "services/billing/main.go"}
+	rootArgs, subTargets := classifyArgs(subs, args)
+
+	if len(rootArgs) != 1 || rootArgs[0] != "README.md" {
+		t.Errorf("rootArgs = %v, want [README.md]", rootArgs)
+	}
+
+	authStage, ok := subTargets["services/auth"]
+	if !ok {
+		t.Fatal("expected entry for services/auth")
+	}
+	if !authStage.stageAll {
+		t.Error("expected services/auth stageAll=true")
+	}
+
+	billingStage, ok := subTargets["services/billing"]
+	if !ok {
+		t.Fatal("expected entry for services/billing")
+	}
+	if billingStage.stageAll {
+		t.Error("expected services/billing stageAll=false")
+	}
+	if len(billingStage.files) != 1 || billingStage.files[0] != "main.go" {
+		t.Errorf("services/billing files = %v, want [main.go]", billingStage.files)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Unit tests — allSubmodulePaths
 // ---------------------------------------------------------------------------
 
@@ -150,12 +357,13 @@ func TestAllSubmodulePaths_ReturnsMultiplePaths(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Integration tests — runAdd (staging)
+// Integration tests — runAdd (no args)
 // ---------------------------------------------------------------------------
 
-// TestRunAdd_NoSubmodules_PrintsHint verifies that when there are no
-// registered submodules, a friendly hint pointing to 'gyat track' is printed.
-func TestRunAdd_NoSubmodules_PrintsHint(t *testing.T) {
+// TestRunAdd_NoChanges_PrintsNothingToStage verifies that when neither the
+// umbrella root nor any submodule has working-tree changes, the command
+// prints "nothing to stage" and returns without error.
+func TestRunAdd_NoChanges_PrintsNothingToStage(t *testing.T) {
 	t.Parallel()
 	skipIfNoGit(t)
 
@@ -168,20 +376,48 @@ func TestRunAdd_NoSubmodules_PrintsHint(t *testing.T) {
 	if err := runAdd(dir, cmd, nil); err != nil {
 		t.Fatalf("runAdd on empty repo: %v", err)
 	}
+	if !strings.Contains(stderrBuf.String(), "nothing to stage") {
+		t.Errorf("expected 'nothing to stage'\ngot: %q", stderrBuf.String())
+	}
+}
 
-	if !strings.Contains(stderrBuf.String(), "gyat track") {
-		t.Errorf("expected hint referencing 'gyat track'\ngot: %q", stderrBuf.String())
+// TestRunAdd_StagesUmbrellaRoot verifies that an untracked file in the
+// umbrella root is staged when no arguments are provided, even when there
+// are no registered submodules.
+func TestRunAdd_StagesUmbrellaRoot(t *testing.T) {
+	t.Parallel()
+	skipIfNoGit(t)
+
+	dir := newUmbrellaRepo(t)
+	// An initial commit gives git diff --cached a HEAD to compare against.
+	writeFile(t, filepath.Join(dir, "README.md"), "# test\n")
+	runGitIn(t, dir, "add", ".")
+	runGitIn(t, dir, "commit", "-m", "initial commit")
+
+	// Write an untracked file to the umbrella root.
+	writeFile(t, filepath.Join(dir, ".gitignore"), "*.log\n")
+
+	cmd := &cobra.Command{}
+	cmd.SetErr(io.Discard)
+
+	if err := runAdd(dir, cmd, nil); err != nil {
+		t.Fatalf("runAdd: %v", err)
+	}
+
+	if staged := stagedFilesInDir(t, dir); !strings.Contains(staged, ".gitignore") {
+		t.Errorf("expected .gitignore to be staged in umbrella root\ngit diff --cached:\n%s", staged)
 	}
 }
 
 // TestRunAdd_NothingToStage_PrintsMessage verifies that when all submodule
-// working trees are clean, a 'nothing to stage' message is printed.
+// working trees are clean (only index-only changes present), a
+// 'nothing to stage' message is printed.
 func TestRunAdd_NothingToStage_PrintsMessage(t *testing.T) {
 	t.Parallel()
 	skipIfNoGit(t)
 
-	// setupTrackedSubmodule leaves the submodule with a clean working tree
-	// (only the committed main.go is present).
+	// setupTrackedSubmodule leaves the umbrella with staged-only changes
+	// (.gitmodules, submodule pointer) and the submodule with a clean working tree.
 	umbrella, _ := setupTrackedSubmodule(t, "svc-clean")
 
 	var stderrBuf bytes.Buffer
@@ -191,7 +427,6 @@ func TestRunAdd_NothingToStage_PrintsMessage(t *testing.T) {
 	if err := runAdd(umbrella, cmd, nil); err != nil {
 		t.Fatalf("runAdd on clean submodules: %v", err)
 	}
-
 	if !strings.Contains(stderrBuf.String(), "nothing to stage") {
 		t.Errorf("expected 'nothing to stage' message\ngot: %q", stderrBuf.String())
 	}
@@ -220,69 +455,34 @@ func TestRunAdd_StagesAllSubmodules(t *testing.T) {
 	}
 }
 
-// TestRunAdd_StagesSpecificSubmodule verifies that when a submodule path is
-// explicitly provided, only that submodule is staged and others are left
-// untouched.
-func TestRunAdd_StagesSpecificSubmodule(t *testing.T) {
+// TestRunAdd_StagesRootAndSubmodule verifies that a single no-arg invocation
+// stages changes in both the umbrella root and a dirty submodule.
+func TestRunAdd_StagesRootAndSubmodule(t *testing.T) {
 	t.Parallel()
 	skipIfNoGit(t)
 
-	base := t.TempDir()
-	umbrella := filepath.Join(base, "umbrella")
-	svcA := filepath.Join(base, "svc-a")
-	svcB := filepath.Join(base, "svc-b")
+	umbrella, subPath := setupTrackedSubmodule(t, "svc-root-and-sub")
+	subDir := filepath.Join(umbrella, subPath)
 
-	for _, d := range []string{umbrella, svcA, svcB} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
-			t.Fatalf("mkdir %s: %v", d, err)
-		}
-	}
+	// Commit the tracked submodule so the umbrella has a clean HEAD to diff against.
+	runGitIn(t, umbrella, "commit", "-m", "track submodule")
 
-	runGitIn(t, umbrella, "init")
-	runGitIn(t, umbrella, "config", "user.email", "test@gyat.test")
-	runGitIn(t, umbrella, "config", "user.name", "gyat test")
-	runGitIn(t, umbrella, "config", "commit.gpgsign", "false")
-	runGitIn(t, umbrella, "config", "core.autocrlf", "false")
+	// Dirty both the umbrella root and the submodule.
+	writeFile(t, filepath.Join(umbrella, ".gitignore"), "*.log\n")
+	dirtySubmodule(t, subDir)
 
-	for _, d := range []string{svcA, svcB} {
-		runGitIn(t, d, "init")
-		runGitIn(t, d, "config", "user.email", "test@gyat.test")
-		runGitIn(t, d, "config", "user.name", "gyat test")
-		runGitIn(t, d, "config", "commit.gpgsign", "false")
-		runGitIn(t, d, "config", "core.autocrlf", "false")
-		writeFile(t, filepath.Join(d, "main.go"), "package main\n")
-		runGitIn(t, d, "add", ".")
-		runGitIn(t, d, "commit", "-m", "init")
-	}
-
-	tc := &cobra.Command{}
-	tc.SetErr(io.Discard)
-	if err := runTrack(umbrella, "", tc, []string{"../svc-a"}); err != nil {
-		t.Fatalf("track svc-a: %v", err)
-	}
-	if err := runTrack(umbrella, "", tc, []string{"../svc-b"}); err != nil {
-		t.Fatalf("track svc-b: %v", err)
-	}
-
-	// Dirty both submodules.
-	dirtySubmodule(t, filepath.Join(umbrella, "svc-a"))
-	dirtySubmodule(t, filepath.Join(umbrella, "svc-b"))
-
-	// Stage only svc-a.
 	cmd := &cobra.Command{}
 	cmd.SetErr(io.Discard)
-	if err := runAdd(umbrella, cmd, []string{"svc-a"}); err != nil {
-		t.Fatalf("runAdd svc-a: %v", err)
+
+	if err := runAdd(umbrella, cmd, nil); err != nil {
+		t.Fatalf("runAdd: %v", err)
 	}
 
-	// svc-a must have staged changes.
-	if staged := stagedFilesInDir(t, filepath.Join(umbrella, "svc-a")); !strings.Contains(staged, "new_feature.go") {
-		t.Errorf("expected svc-a to have staged changes\ngot: %q", staged)
+	if staged := stagedFilesInDir(t, umbrella); !strings.Contains(staged, ".gitignore") {
+		t.Errorf("expected .gitignore to be staged in umbrella root\ngit diff --cached:\n%s", staged)
 	}
-
-	// svc-b must NOT have staged changes.
-	if staged := stagedFilesInDir(t, filepath.Join(umbrella, "svc-b")); staged != "" {
-		t.Errorf("expected svc-b to have no staged changes, got: %q", staged)
+	if staged := stagedFilesInDir(t, subDir); !strings.Contains(staged, "new_feature.go") {
+		t.Errorf("expected new_feature.go to be staged in submodule\ngit diff --cached:\n%s", staged)
 	}
 }
 
@@ -308,7 +508,6 @@ func TestRunAdd_UncheckedOutSubmodule_Warns(t *testing.T) {
 	if err := runAdd(umbrella, cmd, nil); err != nil {
 		t.Fatalf("runAdd with absent submodule dir should not error: %v", err)
 	}
-
 	if !strings.Contains(stderrBuf.String(), "warning") {
 		t.Errorf("expected a warning about the absent submodule\ngot: %q", stderrBuf.String())
 	}
@@ -372,5 +571,137 @@ func TestRunAdd_MultipleSubmodules_StagesAll(t *testing.T) {
 		if staged := stagedFilesInDir(t, filepath.Join(umbrella, name)); !strings.Contains(staged, "new_feature.go") {
 			t.Errorf("expected %s to have staged changes\ngot: %q", name, staged)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Integration tests — runAdd (with args)
+// ---------------------------------------------------------------------------
+
+// TestRunAdd_StagesSpecificSubmodule verifies that when a submodule path is
+// explicitly provided, only that submodule is staged and others are left
+// untouched.
+func TestRunAdd_StagesSpecificSubmodule(t *testing.T) {
+	t.Parallel()
+	skipIfNoGit(t)
+
+	base := t.TempDir()
+	umbrella := filepath.Join(base, "umbrella")
+	svcA := filepath.Join(base, "svc-a")
+	svcB := filepath.Join(base, "svc-b")
+
+	for _, d := range []string{umbrella, svcA, svcB} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", d, err)
+		}
+	}
+
+	runGitIn(t, umbrella, "init")
+	runGitIn(t, umbrella, "config", "user.email", "test@gyat.test")
+	runGitIn(t, umbrella, "config", "user.name", "gyat test")
+	runGitIn(t, umbrella, "config", "commit.gpgsign", "false")
+	runGitIn(t, umbrella, "config", "core.autocrlf", "false")
+
+	for _, d := range []string{svcA, svcB} {
+		runGitIn(t, d, "init")
+		runGitIn(t, d, "config", "user.email", "test@gyat.test")
+		runGitIn(t, d, "config", "user.name", "gyat test")
+		runGitIn(t, d, "config", "commit.gpgsign", "false")
+		runGitIn(t, d, "config", "core.autocrlf", "false")
+		writeFile(t, filepath.Join(d, "main.go"), "package main\n")
+		runGitIn(t, d, "add", ".")
+		runGitIn(t, d, "commit", "-m", "init")
+	}
+
+	tc := &cobra.Command{}
+	tc.SetErr(io.Discard)
+	if err := runTrack(umbrella, "", tc, []string{"../svc-a"}); err != nil {
+		t.Fatalf("track svc-a: %v", err)
+	}
+	if err := runTrack(umbrella, "", tc, []string{"../svc-b"}); err != nil {
+		t.Fatalf("track svc-b: %v", err)
+	}
+
+	// Dirty both submodules.
+	dirtySubmodule(t, filepath.Join(umbrella, "svc-a"))
+	dirtySubmodule(t, filepath.Join(umbrella, "svc-b"))
+
+	// Stage only svc-a.
+	cmd := &cobra.Command{}
+	cmd.SetErr(io.Discard)
+	if err := runAdd(umbrella, cmd, []string{"svc-a"}); err != nil {
+		t.Fatalf("runAdd svc-a: %v", err)
+	}
+
+	// svc-a must have staged changes.
+	if staged := stagedFilesInDir(t, filepath.Join(umbrella, "svc-a")); !strings.Contains(staged, "new_feature.go") {
+		t.Errorf("expected svc-a to have staged changes\ngot: %q", staged)
+	}
+	// svc-b must NOT have staged changes.
+	if staged := stagedFilesInDir(t, filepath.Join(umbrella, "svc-b")); staged != "" {
+		t.Errorf("expected svc-b to have no staged changes, got: %q", staged)
+	}
+}
+
+// TestRunAdd_ExplicitRootFile verifies that an explicit umbrella-root path is
+// staged in the umbrella only, leaving submodule working trees untouched.
+func TestRunAdd_ExplicitRootFile(t *testing.T) {
+	t.Parallel()
+	skipIfNoGit(t)
+
+	umbrella, subPath := setupTrackedSubmodule(t, "svc-explicit-root")
+	subDir := filepath.Join(umbrella, subPath)
+
+	// Commit the tracked submodule so the umbrella has a clean HEAD.
+	runGitIn(t, umbrella, "commit", "-m", "track submodule")
+
+	// Dirty both the umbrella root and the submodule.
+	writeFile(t, filepath.Join(umbrella, ".gitignore"), "*.log\n")
+	dirtySubmodule(t, subDir)
+
+	cmd := &cobra.Command{}
+	cmd.SetErr(io.Discard)
+
+	// Stage only the root .gitignore.
+	if err := runAdd(umbrella, cmd, []string{".gitignore"}); err != nil {
+		t.Fatalf("runAdd .gitignore: %v", err)
+	}
+
+	if staged := stagedFilesInDir(t, umbrella); !strings.Contains(staged, ".gitignore") {
+		t.Errorf("expected .gitignore to be staged in umbrella root\ngit diff --cached:\n%s", staged)
+	}
+	if staged := stagedFilesInDir(t, subDir); staged != "" {
+		t.Errorf("expected submodule to be untouched, got staged: %q", staged)
+	}
+}
+
+// TestRunAdd_FileInsideSubmodule verifies that a path in the form
+// "<submodule>/<file>" stages only the named file inside the submodule,
+// leaving other files in the same submodule unstaged.
+func TestRunAdd_FileInsideSubmodule(t *testing.T) {
+	t.Parallel()
+	skipIfNoGit(t)
+
+	umbrella, subPath := setupTrackedSubmodule(t, "svc-file-route")
+	subDir := filepath.Join(umbrella, subPath)
+
+	// Write two untracked files inside the submodule — only one should be staged.
+	writeFile(t, filepath.Join(subDir, "handler.go"), "package main\n")
+	writeFile(t, filepath.Join(subDir, "other.go"), "package main\n")
+
+	cmd := &cobra.Command{}
+	cmd.SetErr(io.Discard)
+
+	// Stage only handler.go via its umbrella-relative path.
+	if err := runAdd(umbrella, cmd, []string{subPath + "/handler.go"}); err != nil {
+		t.Fatalf("runAdd %s/handler.go: %v", subPath, err)
+	}
+
+	staged := stagedFilesInDir(t, subDir)
+	if !strings.Contains(staged, "handler.go") {
+		t.Errorf("expected handler.go to be staged\ngit diff --cached:\n%s", staged)
+	}
+	if strings.Contains(staged, "other.go") {
+		t.Errorf("expected other.go to NOT be staged\ngit diff --cached:\n%s", staged)
 	}
 }
