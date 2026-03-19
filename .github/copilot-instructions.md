@@ -175,3 +175,74 @@ Never use:
 
 - **New subcommands** belong in `cmd/<name>.go` and must be registered in `cmd/root.go`'s
   `init()`.
+
+---
+
+## Commit Messages & Tags
+
+### Commit messages
+
+Follow the [Conventional Commits](https://www.conventionalcommits.org/) style used throughout
+this repo:
+
+```
+<type>: <short imperative summary>
+```
+
+Common types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`.
+
+- Lowercase, no trailing period.
+- Subject line ≤ 72 characters.
+- If a body is needed, separate it from the subject with a blank line and wrap at 72 characters.
+- Before writing a commit message, run `git log --oneline` to check the recent history and
+  match the established tone and granularity.
+
+### Tag messages
+
+Tags use annotated format (`git tag -a`) with a structured multi-section body.
+**Always** inspect existing tags first with `git tag -n99 --sort=-version:refname` and mirror
+the style of the most recent ones exactly.
+
+#### Version bump rules
+
+| Change                                      | Bump         |
+|---------------------------------------------|--------------|
+| Breaking change / renamed command           | minor (0.X.0)|
+| New command or user-visible behaviour       | minor (0.X.0)|
+| Bug fix or internal improvement only        | patch (0.X.Y)|
+
+#### Tag message format
+
+```
+v<X.Y.Z> — <short tagline>
+
+<SECTION HEADING>
+=================
+
+* <item title>
+  <Explanation. Wrap at 72 characters. Use a hanging-indent style so the
+  text aligns under the first word after the bullet.>
+
+  - Sub-bullet for a specific detail
+  - Another sub-bullet
+```
+
+#### Section headings (use only what applies, in this order)
+
+| Heading            | When to use                                              |
+|--------------------|----------------------------------------------------------|
+| `BREAKING CHANGES` | Renamed or removed commands / flags                      |
+| `NEW COMMANDS`     | New top-level subcommands                                |
+| `NEW COMMAND`      | Single new subcommand                                    |
+| `IMPROVEMENTS`     | User-visible enhancements to existing behaviour          |
+| `FIXES`            | Bug fixes                                                |
+| `INTERNAL`         | Refactors, new helpers, structural changes               |
+| `TESTS`            | New or renamed test cases                                |
+
+#### Style rules
+
+- Tagline after the em dash `—` is lowercase, no trailing punctuation.
+- Section headings are ALL-CAPS, underlined with `=` to match their length.
+- Bullet marker is `*`; sub-bullets use `-` indented two spaces.
+- No emoji. Em dashes `—`, arrows `→`, and box-drawing chars `─` are fine.
+- Be specific: name the functions, files, flags, and test cases that changed.
