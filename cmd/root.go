@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"runtime/debug"
+
 	"github.com/spf13/cobra"
 )
 
@@ -8,6 +10,9 @@ import (
 // without -ldflags; release builds inject it via:
 //
 //	go build -ldflags "-X github.com/refansa/gyat/cmd.Version=v0.2.0" .
+//
+// When installed via "go install module@version", the version is read
+// automatically from the embedded build info as a fallback.
 var Version = "dev"
 
 var rootCmd = &cobra.Command{
@@ -24,6 +29,13 @@ func Execute() error {
 }
 
 func init() {
+	if Version == "dev" {
+		if info, ok := debug.ReadBuildInfo(); ok {
+			if v := info.Main.Version; v != "" && v != "(devel)" {
+				Version = v
+			}
+		}
+	}
 	rootCmd.Version = Version
 	rootCmd.AddCommand(initCmd)
 	rootCmd.AddCommand(trackCmd)
