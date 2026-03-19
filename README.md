@@ -23,6 +23,17 @@ Managing a constellation of tightly-coupled repos means:
 submodules, with a simple CLI to manage them — without wrestling with raw git
 submodule commands.
 
+### I meant, what with the funny name?
+
+Ah, of course, that is the most important bit. Initially I was thinking about naming
+the project as "Yet Another Git Tracker" (yagt). But it didn't roll well off the tongue
+and it felt like a little bit more awkward to type as a command. Upon a closer look
+at the abbreviation, I could rearrange it to make a funny little gag name "gyat" 
+(minus the other 't'). It just so happened that I could easily come up with the project's
+full name immediately "Git Your Ass Together" because I always thought that these 
+repositories are really a big pain in the ass. Why can't they just be bundled
+together from the start?!
+
 ## Goals
 
 - **Aggregate** multiple repositories under one roof
