@@ -48,6 +48,11 @@ func runPush(dir string, force bool, cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	urlMap, err := submoduleURLMap(dir)
+	if err != nil {
+		return err
+	}
+
 	gitArgs := []string{"push"}
 	if force {
 		gitArgs = append(gitArgs, "--force")
@@ -61,6 +66,11 @@ func runPush(dir string, force bool, cmd *cobra.Command, args []string) error {
 	pushed := 0
 
 	for _, path := range targets {
+		if url, ok := urlMap[path]; ok && isLocalPath(url) {
+			fmt.Fprintf(cmd.ErrOrStderr(), "hint: '%s' uses a local path remote — skipping\n", path)
+			continue
+		}
+
 		subDir := filepath.Join(dir, path)
 		if _, err := os.Stat(subDir); os.IsNotExist(err) {
 			fmt.Fprintf(cmd.ErrOrStderr(), "warning: submodule '%s' is not checked out, skipping\n", path)

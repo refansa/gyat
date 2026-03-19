@@ -3,7 +3,6 @@ package cmd
 import (
 	"bytes"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -73,6 +72,53 @@ func TestResolveTargetPaths_InvalidArg(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Unit tests — submoduleURLMap
+// ---------------------------------------------------------------------------
+
+// TestSubmoduleURLMap_NoGitmodules verifies that a repository with no
+// .gitmodules returns a nil map without an error.
+func TestSubmoduleURLMap_NoGitmodules(t *testing.T) {
+	t.Parallel()
+	skipIfNoGit(t)
+
+	dir := newUmbrellaRepo(t)
+
+	urlMap, err := submoduleURLMap(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if urlMap != nil {
+		t.Errorf("expected nil map for a repo with no .gitmodules, got: %v", urlMap)
+	}
+}
+
+// TestSubmoduleURLMap_ReturnsLocalPathURL verifies that a submodule tracked
+// via a local path has its URL recorded in the map and that the URL is
+// correctly identified as a local path by isLocalPath.
+func TestSubmoduleURLMap_ReturnsLocalPathURL(t *testing.T) {
+	t.Parallel()
+	skipIfNoGit(t)
+
+	umbrella, subPath := setupTrackedSubmodule(t, "svc-url-map")
+
+	urlMap, err := submoduleURLMap(umbrella)
+	if err != nil {
+		t.Fatalf("submoduleURLMap: %v", err)
+	}
+	if urlMap == nil {
+		t.Fatal("expected a non-nil map, got nil")
+	}
+
+	url, ok := urlMap[subPath]
+	if !ok {
+		t.Fatalf("expected map to contain path %q, keys: %v", subPath, urlMap)
+	}
+	if !isLocalPath(url) {
+		t.Errorf("expected URL %q to be a local path, but isLocalPath returned false", url)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Integration tests — runPull
 // ---------------------------------------------------------------------------
 
@@ -97,33 +143,28 @@ func TestRunPull_NoSubmodules(t *testing.T) {
 	}
 }
 
-// TestRunPull_SkipsUncheckedSubmodule verifies that a submodule whose directory
-// has been removed is skipped with a warning rather than causing an error.
-func TestRunPull_SkipsUncheckedSubmodule(t *testing.T) {
+// TestRunPull_SkipsLocalPathSubmodule verifies that a submodule whose URL is a
+// local path is skipped with a hint rather than attempting a remote pull.
+func TestRunPull_SkipsLocalPathSubmodule(t *testing.T) {
 	t.Parallel()
 	skipIfNoGit(t)
 
-	umbrella, subPath := setupTrackedSubmodule(t, "svc-pull-absent")
-
-	// Remove the submodule directory to simulate an unchecked-out submodule.
-	if err := os.RemoveAll(filepath.Join(umbrella, subPath)); err != nil {
-		t.Fatalf("removing submodule dir: %v", err)
-	}
+	umbrella, subPath := setupTrackedSubmodule(t, "svc-pull-local")
 
 	var stderrBuf bytes.Buffer
 	cc := &cobra.Command{}
 	cc.SetErr(&stderrBuf)
 
 	if err := runPull(umbrella, false, cc, nil); err != nil {
-		t.Fatalf("runPull with unchecked submodule: %v", err)
+		t.Fatalf("runPull with local path submodule: %v", err)
 	}
 
 	stderr := stderrBuf.String()
-	if !strings.Contains(stderr, "warning:") {
-		t.Errorf("expected stderr to contain 'warning:', got:\n%s", stderr)
+	if !strings.Contains(stderr, "hint:") {
+		t.Errorf("expected stderr to contain 'hint:', got:\n%s", stderr)
 	}
 	if !strings.Contains(stderr, subPath) {
-		t.Errorf("expected stderr to contain submodule name %q, got:\n%s", subPath, stderr)
+		t.Errorf("expected stderr to mention submodule %q, got:\n%s", subPath, stderr)
 	}
 }
 
@@ -144,15 +185,16 @@ func TestRunPull_InvalidPath(t *testing.T) {
 	}
 }
 
-// TestRunPull_NewCommitIsPickedUp verifies that after a new commit is pushed to
-// the source repository, running pull advances the submodule's HEAD.
-func TestRunPull_NewCommitIsPickedUp(t *testing.T) {
+// TestRunPull_SkipsLocalPathEvenWithNewCommit verifies that a submodule whose
+// URL is a local path is not pulled even when new commits are available in the
+// source repository — the hint is printed and HEAD remains unchanged.
+func TestRunPull_SkipsLocalPathEvenWithNewCommit(t *testing.T) {
 	t.Parallel()
 	skipIfNoGit(t)
 
-	umbrella, source := newTestSetup(t, "svc-pull-ahead")
+	umbrella, source := newTestSetup(t, "svc-pull-local-commit")
 
-	// Rename the default branch to "main" so the tracking branch is consistent.
+	// Rename the default branch to "main" for determinism.
 	runGitIn(t, source, "branch", "-M", "main")
 
 	rel := relPath(umbrella, source)
@@ -162,27 +204,33 @@ func TestRunPull_NewCommitIsPickedUp(t *testing.T) {
 		t.Fatalf("setup: runTrack: %v", err)
 	}
 
-	subDir := filepath.Join(umbrella, "svc-pull-ahead")
+	subDir := filepath.Join(umbrella, "svc-pull-local-commit")
 
-	// Check out the named branch so that git pull has a tracking target.
+	// Check out the named branch so the submodule is not in detached HEAD.
 	runGitIn(t, subDir, "checkout", "main")
 
 	before := runGitIn(t, subDir, "rev-parse", "HEAD")
 
-	// Add a new commit to the source repository.
+	// Push a new commit to the source repository.
 	writeFile(t, filepath.Join(source, "feature.go"), "package main\n// new feature\n")
 	runGitIn(t, source, "add", ".")
 	runGitIn(t, source, "commit", "-m", "feat: new feature")
 
+	var stderrBuf bytes.Buffer
 	cc := &cobra.Command{}
-	cc.SetErr(io.Discard)
+	cc.SetErr(&stderrBuf)
+
 	if err := runPull(umbrella, false, cc, nil); err != nil {
 		t.Fatalf("runPull: %v", err)
 	}
 
+	// HEAD must not have advanced — the local-path submodule was skipped.
 	after := runGitIn(t, subDir, "rev-parse", "HEAD")
+	if before != after {
+		t.Errorf("expected submodule HEAD to remain at %s after skipped pull, but it moved to %s", before, after)
+	}
 
-	if before == after {
-		t.Errorf("expected submodule HEAD to advance after pull, but it stayed at %s", before)
+	if !strings.Contains(stderrBuf.String(), "hint:") {
+		t.Errorf("expected hint message in stderr, got:\n%s", stderrBuf.String())
 	}
 }

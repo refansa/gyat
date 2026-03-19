@@ -3,7 +3,6 @@ package cmd
 import (
 	"bytes"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -36,33 +35,28 @@ func TestRunPush_NoSubmodules(t *testing.T) {
 	}
 }
 
-// TestRunPush_SkipsUncheckedSubmodule verifies that a submodule whose directory
-// has been removed is skipped with a warning rather than causing an error.
-func TestRunPush_SkipsUncheckedSubmodule(t *testing.T) {
+// TestRunPush_SkipsLocalPathSubmodule verifies that a submodule whose URL is a
+// local path is skipped with a hint rather than attempting a remote push.
+func TestRunPush_SkipsLocalPathSubmodule(t *testing.T) {
 	t.Parallel()
 	skipIfNoGit(t)
 
-	umbrella, subPath := setupTrackedSubmodule(t, "svc-push-absent")
-
-	// Remove the submodule directory to simulate an unchecked-out submodule.
-	if err := os.RemoveAll(filepath.Join(umbrella, subPath)); err != nil {
-		t.Fatalf("removing submodule dir: %v", err)
-	}
+	umbrella, subPath := setupTrackedSubmodule(t, "svc-push-local")
 
 	var stderrBuf bytes.Buffer
 	cc := &cobra.Command{}
 	cc.SetErr(&stderrBuf)
 
 	if err := runPush(umbrella, false, cc, nil); err != nil {
-		t.Fatalf("runPush with unchecked submodule: %v", err)
+		t.Fatalf("runPush with local path submodule: %v", err)
 	}
 
 	stderr := stderrBuf.String()
-	if !strings.Contains(stderr, "warning:") {
-		t.Errorf("expected stderr to contain 'warning:', got:\n%s", stderr)
+	if !strings.Contains(stderr, "hint:") {
+		t.Errorf("expected stderr to contain 'hint:', got:\n%s", stderr)
 	}
 	if !strings.Contains(stderr, subPath) {
-		t.Errorf("expected stderr to contain submodule name %q, got:\n%s", subPath, stderr)
+		t.Errorf("expected stderr to mention submodule %q, got:\n%s", subPath, stderr)
 	}
 }
 
@@ -83,18 +77,20 @@ func TestRunPush_InvalidPath(t *testing.T) {
 	}
 }
 
-// TestRunPush_PushesToRemote verifies that a commit made inside a submodule
-// is pushed back to the source repository.
-func TestRunPush_PushesToRemote(t *testing.T) {
+// TestRunPush_SkipsLocalPathEvenAfterCommit verifies that a submodule whose
+// URL is a local path is not pushed even when new local commits exist — the
+// hint is printed and the commit does not appear in the source repository.
+func TestRunPush_SkipsLocalPathEvenAfterCommit(t *testing.T) {
 	t.Parallel()
 	skipIfNoGit(t)
 
-	umbrella, source := newTestSetup(t, "svc-push-remote")
+	umbrella, source := newTestSetup(t, "svc-push-local-commit")
 
-	// Rename the default branch to "main" for consistency.
+	// Rename the default branch to "main" for determinism.
 	runGitIn(t, source, "branch", "-M", "main")
 
-	// Allow pushes to the non-bare source repository.
+	// Allow pushes to the non-bare source repository (needed only if push
+	// were actually attempted; included here to avoid a false-negative).
 	runGitIn(t, source, "config", "receive.denyCurrentBranch", "updateInstead")
 
 	rel := relPath(umbrella, source)
@@ -104,25 +100,32 @@ func TestRunPush_PushesToRemote(t *testing.T) {
 		t.Fatalf("setup: runTrack: %v", err)
 	}
 
-	subDir := filepath.Join(umbrella, "svc-push-remote")
+	subDir := filepath.Join(umbrella, "svc-push-local-commit")
 
-	// Check out the named branch so that git push has a tracking target.
+	// Check out the named branch so the submodule is not in detached HEAD.
 	runGitIn(t, subDir, "checkout", "main")
 
-	// Create and commit a new file inside the submodule.
+	// Create and stage a new commit inside the submodule.
 	writeFile(t, filepath.Join(subDir, "pushed.go"), "package main\n")
 	runGitIn(t, subDir, "add", ".")
-	runGitIn(t, subDir, "commit", "-m", "feat: pushed file")
+	runGitIn(t, subDir, "commit", "-m", "feat: local only commit")
 
+	var stderrBuf bytes.Buffer
 	cc := &cobra.Command{}
-	cc.SetErr(io.Discard)
+	cc.SetErr(&stderrBuf)
+
 	if err := runPush(umbrella, false, cc, nil); err != nil {
 		t.Fatalf("runPush: %v", err)
 	}
 
-	// Verify the commit arrived in the source repository.
-	log := runGitIn(t, source, "log", "--oneline", "-1")
-	if !strings.Contains(log, "feat: pushed file") {
-		t.Errorf("expected source log to contain 'feat: pushed file', got: %s", log)
+	// The commit must NOT have been pushed to the source repository.
+	sourceLog := runGitIn(t, source, "log", "--oneline", "-1")
+	if strings.Contains(sourceLog, "feat: local only commit") {
+		t.Errorf("expected commit to remain local (not pushed), but it appeared in source: %s", sourceLog)
+	}
+
+	// A hint message must have been printed.
+	if !strings.Contains(stderrBuf.String(), "hint:") {
+		t.Errorf("expected hint message in stderr, got:\n%s", stderrBuf.String())
 	}
 }

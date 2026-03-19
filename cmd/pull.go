@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/refansa/gyat/internal/git"
 	"github.com/spf13/cobra"
@@ -51,6 +52,11 @@ func runPull(dir string, rebase bool, cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	urlMap, err := submoduleURLMap(dir)
+	if err != nil {
+		return err
+	}
+
 	gitArgs := []string{"pull"}
 	if rebase {
 		gitArgs = append(gitArgs, "--rebase")
@@ -64,6 +70,11 @@ func runPull(dir string, rebase bool, cmd *cobra.Command, args []string) error {
 	pulled := 0
 
 	for _, path := range targets {
+		if url, ok := urlMap[path]; ok && isLocalPath(url) {
+			fmt.Fprintf(cmd.ErrOrStderr(), "hint: '%s' uses a local path remote — skipping\n", path)
+			continue
+		}
+
 		subDir := filepath.Join(dir, path)
 		if _, err := os.Stat(subDir); os.IsNotExist(err) {
 			fmt.Fprintf(cmd.ErrOrStderr(), "warning: submodule '%s' is not checked out, skipping\n", path)
@@ -90,6 +101,54 @@ func runPull(dir string, rebase bool, cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// submoduleURLMap returns a map from submodule filesystem path to the URL
+// recorded in .gitmodules. Returns nil when .gitmodules is absent or empty.
+// The map key is the path value normalised with filepath.ToSlash/Clean so it
+// matches the paths returned by allSubmodulePaths.
+func submoduleURLMap(dir string) (map[string]string, error) {
+	pathsOut, err := git.Run(dir, "config", "-f", ".gitmodules", "--get-regexp", `submodule\..*\.path`)
+	if err != nil || strings.TrimSpace(pathsOut) == "" {
+		return nil, nil
+	}
+
+	urlsOut, err := git.Run(dir, "config", "-f", ".gitmodules", "--get-regexp", `submodule\..*\.url`)
+	if err != nil || strings.TrimSpace(urlsOut) == "" {
+		return nil, nil
+	}
+
+	// Build section-name → normalised path.
+	nameToPath := make(map[string]string)
+	for _, line := range strings.Split(pathsOut, "\n") {
+		line = strings.TrimRight(line, "\r")
+		parts := strings.Fields(line)
+		if len(parts) != 2 {
+			continue
+		}
+		// key format: "submodule.<name>.path"
+		name := strings.TrimPrefix(parts[0], "submodule.")
+		name = strings.TrimSuffix(name, ".path")
+		nameToPath[name] = filepath.ToSlash(filepath.Clean(parts[1]))
+	}
+
+	// Build normalised path → URL.
+	result := make(map[string]string)
+	for _, line := range strings.Split(urlsOut, "\n") {
+		line = strings.TrimRight(line, "\r")
+		parts := strings.Fields(line)
+		if len(parts) != 2 {
+			continue
+		}
+		// key format: "submodule.<name>.url"
+		name := strings.TrimPrefix(parts[0], "submodule.")
+		name = strings.TrimSuffix(name, ".url")
+		if path, ok := nameToPath[name]; ok {
+			result[path] = parts[1]
+		}
+	}
+
+	return result, nil
 }
 
 // hasUpstream reports whether the current branch in dir has an upstream
