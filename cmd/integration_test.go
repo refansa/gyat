@@ -59,12 +59,12 @@ func TestIntegration_FullWorkflow(t *testing.T) {
 		t.Errorf("step 3: expected table header in list output\ngot:\n%s", out)
 	}
 
-	// ── 4. gyat remove ────────────────────────────────────────────────────────
+	// ── 4. gyat untrack ───────────────────────────────────────────────────────
 
 	rc := &cobra.Command{}
 	rc.SetErr(io.Discard)
-	if err := runRemove(umbrella, rc, []string{"my-service"}); err != nil {
-		t.Fatalf("step 4 (gyat remove my-service): %v", err)
+	if err := runUntrack(umbrella, rc, []string{"my-service"}); err != nil {
+		t.Fatalf("step 4 (gyat untrack my-service): %v", err)
 	}
 	assertPathAbsent(t, filepath.Join(umbrella, "my-service"))
 	assertPathAbsent(t, filepath.Join(umbrella, ".git", "modules", "my-service"))
@@ -206,8 +206,8 @@ func TestIntegration_RemoveThenReTrack(t *testing.T) {
 	// Remove it.
 	rc := &cobra.Command{}
 	rc.SetErr(io.Discard)
-	if err := runRemove(umbrella, rc, []string{"notifications"}); err != nil {
-		t.Fatalf("remove: %v", err)
+	if err := runUntrack(umbrella, rc, []string{"notifications"}); err != nil {
+		t.Fatalf("untrack: %v", err)
 	}
 
 	assertPathAbsent(t, filepath.Join(umbrella, "notifications"))
@@ -254,9 +254,9 @@ func TestIntegration_RemoveNonExistentSubmodule(t *testing.T) {
 
 	rc := &cobra.Command{}
 	rc.SetErr(io.Discard)
-	err := runRemove(dir, rc, []string{"ghost-service"})
+	err := runUntrack(dir, rc, []string{"ghost-service"})
 	if err == nil {
-		t.Error("expected error when removing a non-existent submodule, got nil")
+		t.Error("expected error when untracking a non-existent submodule, got nil")
 	}
 }
 

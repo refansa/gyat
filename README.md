@@ -214,22 +214,19 @@ services/billing  (default)   e5f6a7b8    modified      https://github.com/org/s
 services/notify   (default)   ?           not initialized  ../service-notify
 ```
 
-### `gyat remove`
+### `gyat untrack`
 
-Remove a submodule cleanly. This performs the full three-step removal that git
+Untrack a submodule cleanly. This performs the full three-step cleanup that git
 requires: deinit, delete the cached module data, and remove from the index.
 
 ```sh
-gyat remove services/auth
-
-# Alias
-gyat rm services/auth
+gyat untrack services/auth
 ```
 
-After removal, commit the resulting changes to `.gitmodules` and the index:
+After untracking, commit the resulting changes to `.gitmodules` and the index:
 
 ```sh
-gyat commit -m "chore: remove auth submodule"
+gyat commit -m "chore: untrack auth submodule"
 ```
 
 ### `gyat update`

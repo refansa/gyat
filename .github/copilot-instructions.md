@@ -44,7 +44,7 @@ Test layout:
 - `internal/git/git_test.go` — unit tests for `Run` and error wrapping behaviour
 - `cmd/testhelper_test.go`   — shared helpers: repo setup, stdout/stderr capture, assertions
 - `cmd/<command>_test.go`    — per-command tests (unit + integration)
-- `cmd/integration_test.go`  — full end-to-end workflow tests (init → add → list → remove)
+- `cmd/integration_test.go`  — full end-to-end workflow tests (init → add → list → untrack)
 
 Integration tests spin up real git repositories inside `t.TempDir()` directories and call the
 `run*` functions directly. They do not touch the network or any repository outside the temp dir.
@@ -61,7 +61,7 @@ into the test repo, and call `run<Command>()` directly rather than going through
 ```
 main.go                  → calls cmd.Execute(), prints errors to stderr, exits with code 1
 cmd/root.go              → defines rootCmd, registers all subcommands in init()
-cmd/<command>.go         → one file per subcommand (add, commit, init, list, remove, status, sync, update)
+cmd/<command>.go         → one file per subcommand (add, commit, init, list, untrack, status, sync, update)
 internal/git/git.go      → the only git abstraction: Run() and RunInteractive()
 ```
 
@@ -164,7 +164,7 @@ Never use:
   (CVE-2022-39253). When `isLocalPath(source)` is true, prepend
   `-c protocol.file.allow=always` to the git args before `submodule add`.
 
-- **`remove` does the full three-step cleanup** manually:
+- **`untrack` does the full three-step cleanup** manually:
   1. `git submodule deinit -f <path>`
   2. `os.RemoveAll(.git/modules/<path>)`
   3. `git rm -f <path>`

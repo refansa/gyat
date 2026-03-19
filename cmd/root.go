@@ -40,7 +40,7 @@ func init() {
 	rootCmd.AddCommand(initCmd)
 	rootCmd.AddCommand(trackCmd)
 	rootCmd.AddCommand(addCmd)
-	rootCmd.AddCommand(removeCmd)
+	rootCmd.AddCommand(untrackCmd)
 	rootCmd.AddCommand(updateCmd)
 	rootCmd.AddCommand(listCmd)
 	rootCmd.AddCommand(commitCmd)
