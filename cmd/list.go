@@ -23,9 +23,9 @@ var listCmd = &cobra.Command{
 	Short: "List all managed submodules",
 	Long:  `List all submodules tracked in this repository, along with their URL, tracked branch, current commit, and status.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		dir, err := os.Getwd()
+		dir, err := execDir()
 		if err != nil {
-			return fmt.Errorf("getting working directory: %w", err)
+			return err
 		}
 		return runList(dir, cmd, args)
 	},

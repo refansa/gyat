@@ -1,6 +1,7 @@
 package git_test
 
 import (
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -30,9 +31,10 @@ func TestRun_ReturnsOutput(t *testing.T) {
 	}
 }
 
-// TestRun_OutputIsTrimmed verifies that leading and trailing whitespace is
-// stripped from the returned output.
-func TestRun_OutputIsTrimmed(t *testing.T) {
+// TestRun_TrailingNewlineIsTrimmed verifies that trailing newlines are stripped
+// from the returned output. Leading whitespace is intentionally preserved so
+// that porcelain status lines (e.g. " M file.go") keep their XY column format.
+func TestRun_TrailingNewlineIsTrimmed(t *testing.T) {
 	t.Parallel()
 	skipIfNoGit(t)
 
@@ -40,8 +42,60 @@ func TestRun_OutputIsTrimmed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("git version: %v", err)
 	}
-	if out != strings.TrimSpace(out) {
-		t.Errorf("output has untrimmed whitespace: %q", out)
+	if strings.HasSuffix(out, "\n") || strings.HasSuffix(out, "\r") {
+		t.Errorf("output has trailing newline: %q", out)
+	}
+}
+
+// TestRun_LeadingWhitespacePreserved verifies that leading whitespace is NOT
+// stripped from the output. Git porcelain status lines use position 0 for the
+// index column and position 1 for the working-tree column; a space in position
+// 0 (e.g. " M file.go") must not be silently removed.
+func TestRun_LeadingWhitespacePreserved(t *testing.T) {
+	t.Parallel()
+	skipIfNoGit(t)
+
+	dir := t.TempDir()
+	if _, err := git.Run(dir, "init"); err != nil {
+		t.Fatalf("setup: git init: %v", err)
+	}
+	if _, err := git.Run(dir, "config", "user.email", "test@gyat.test"); err != nil {
+		t.Fatalf("setup: git config email: %v", err)
+	}
+	if _, err := git.Run(dir, "config", "user.name", "gyat test"); err != nil {
+		t.Fatalf("setup: git config name: %v", err)
+	}
+	if _, err := git.Run(dir, "config", "commit.gpgsign", "false"); err != nil {
+		t.Fatalf("setup: git config gpgsign: %v", err)
+	}
+
+	// Create and commit a file so the repo has a HEAD.
+	if err := os.WriteFile(dir+"/init.txt", []byte("init\n"), 0o644); err != nil {
+		t.Fatalf("setup: write init.txt: %v", err)
+	}
+	if _, err := git.Run(dir, "add", "init.txt"); err != nil {
+		t.Fatalf("setup: git add: %v", err)
+	}
+	if _, err := git.Run(dir, "commit", "-m", "initial"); err != nil {
+		t.Fatalf("setup: git commit: %v", err)
+	}
+
+	// Modify the file without staging it — produces " M init.txt" in porcelain.
+	if err := os.WriteFile(dir+"/init.txt", []byte("changed\n"), 0o644); err != nil {
+		t.Fatalf("setup: modify init.txt: %v", err)
+	}
+
+	out, err := git.Run(dir, "status", "--porcelain")
+	if err != nil {
+		t.Fatalf("git status --porcelain: %v", err)
+	}
+
+	// The first line must start with a space (X=' ', Y='M').
+	// If TrimSpace were used, the leading space would be stripped and the
+	// porcelain XY columns would be misread by hasWorkingTreeChanges.
+	firstLine := strings.SplitN(out, "\n", 2)[0]
+	if len(firstLine) < 1 || firstLine[0] != ' ' {
+		t.Errorf("expected first porcelain line to start with a space, got %q", firstLine)
 	}
 }
 

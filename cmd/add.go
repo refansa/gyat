@@ -43,9 +43,9 @@ belongs to:
   # Mix of root files and submodule paths
   gyat add README.md services/auth services/billing/main.go`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		dir, err := os.Getwd()
+		dir, err := execDir()
 		if err != nil {
-			return fmt.Errorf("getting working directory: %w", err)
+			return err
 		}
 		return runAdd(dir, cmd, args)
 	},
@@ -68,7 +68,8 @@ func runAdd(dir string, cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if len(args) == 0 {
+	// If no args or the first arg is ".", stage everything.
+	if len(args) == 0 || args[0] == "." {
 		return stageAll(dir, submodulePaths, cmd)
 	}
 	return stageTargeted(dir, submodulePaths, args, cmd)
@@ -104,6 +105,7 @@ func stageAll(dir string, submodulePaths []string, cmd *cobra.Command) error {
 		if err != nil {
 			return fmt.Errorf("checking status of '%s': %w", path, err)
 		}
+
 		if !hasWorkingTreeChanges(statusOut) {
 			continue
 		}

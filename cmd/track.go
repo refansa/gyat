@@ -44,9 +44,9 @@ Use --branch to track a specific branch of the submodule.`,
   gyat track /home/user/projects/service-auth services/auth`,
 	Args: cobra.RangeArgs(1, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		dir, err := os.Getwd()
+		dir, err := execDir()
 		if err != nil {
-			return fmt.Errorf("getting working directory: %w", err)
+			return err
 		}
 		return runTrack(dir, trackBranch, cmd, args)
 	},

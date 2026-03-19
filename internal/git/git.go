@@ -27,7 +27,7 @@ func Run(dir string, args ...string) (string, error) {
 		return "", fmt.Errorf("%s", msg)
 	}
 
-	return strings.TrimSpace(stdout.String()), nil
+	return strings.TrimRight(stdout.String(), "\r\n"), nil
 }
 
 // RunInteractive executes a git command in dir with stdin, stdout, and stderr

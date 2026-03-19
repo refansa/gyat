@@ -17,9 +17,9 @@ an existing one. If a .gitmodules file is already present (e.g. after cloning
 an existing gyat-managed repo), all submodules will be initialized and checked
 out automatically.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		dir, err := os.Getwd()
+		dir, err := execDir()
 		if err != nil {
-			return fmt.Errorf("getting working directory: %w", err)
+			return err
 		}
 		return runInit(dir, cmd, args)
 	},

@@ -39,9 +39,9 @@ were updated.`,
 		if commitMessage == "" {
 			return fmt.Errorf("required flag \"message\" not set")
 		}
-		dir, err := os.Getwd()
+		dir, err := execDir()
 		if err != nil {
-			return fmt.Errorf("getting working directory: %w", err)
+			return err
 		}
 		return runCommit(dir, commitMessage, commitNoVerify, cmd, args)
 	},

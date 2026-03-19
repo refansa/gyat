@@ -21,9 +21,9 @@ This performs the full three-step removal that git requires:
   3. Remove the submodule from the index (git rm)`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		dir, err := os.Getwd()
+		dir, err := execDir()
 		if err != nil {
-			return fmt.Errorf("getting working directory: %w", err)
+			return err
 		}
 		return runRemove(dir, cmd, args)
 	},

@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/refansa/gyat/internal/git"
 	"github.com/spf13/cobra"
@@ -19,9 +18,9 @@ renamed) and you need all local clones to point to the new location.
 After syncing URLs, it will also re-initialize and update any submodules that
 were not yet cloned.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		dir, err := os.Getwd()
+		dir, err := execDir()
 		if err != nil {
-			return fmt.Errorf("getting working directory: %w", err)
+			return err
 		}
 		return runSync(dir, cmd, args)
 	},
