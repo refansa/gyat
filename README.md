@@ -128,6 +128,45 @@ gyat add services/auth services/billing
 When no path is given, `gyat add` runs `git add -A` inside every submodule that
 is currently checked out, leaving clean or uninitialized submodules untouched.
 
+### `gyat status`
+
+Show the working tree status of the umbrella repository and all registered
+submodules. Each repository gets its own clearly labelled section that mirrors
+`git status`: staged changes, unstaged changes, and untracked files.
+
+```sh
+# Show status for all repositories
+gyat status
+
+# Show status for specific submodules (plus the umbrella)
+gyat status services/auth services/billing
+```
+
+Example output:
+
+```
+umbrella repository — main
+──────────────────────────
+Changes to be committed:
+	new file:    services/auth
+
+services/auth — feat/login
+──────────────────────────
+Changes to be committed:
+	new file:    handler.go
+
+Changes not staged for commit:
+	modified:    main.go
+
+services/billing — main
+───────────────────────
+nothing to commit, working tree clean
+```
+
+Submodules registered in `.gitmodules` but not yet initialised on disk are
+flagged with `not initialized` in their section. Pass one or more submodule
+paths to limit the output to those submodules — the umbrella is always shown.
+
 ### `gyat commit`
 
 Commit staged changes across multiple submodules simultaneously with the same

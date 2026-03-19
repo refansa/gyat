@@ -61,7 +61,7 @@ into the test repo, and call `run<Command>()` directly rather than going through
 ```
 main.go                  → calls cmd.Execute(), prints errors to stderr, exits with code 1
 cmd/root.go              → defines rootCmd, registers all subcommands in init()
-cmd/<command>.go         → one file per subcommand (add, commit, init, list, remove, sync, update)
+cmd/<command>.go         → one file per subcommand (add, commit, init, list, remove, status, sync, update)
 internal/git/git.go      → the only git abstraction: Run() and RunInteractive()
 ```
 
@@ -90,11 +90,18 @@ Each command file follows the same pattern:
 Some functions are shared between command files within the `cmd` package:
 
 - `allSubmodulePaths(dir string) ([]string, error)` — reads every submodule path from
-  `.gitmodules`. Used by `add` and `commit`.
+  `.gitmodules`. Used by `add`, `commit`, and `status`.
+- `resolveTargetPaths(submodulePaths, args []string) ([]string, error)` — returns the
+  submodule paths to operate on: all registered paths when `args` is empty, otherwise
+  only the validated subset named in `args`. Used by `pull`, `push`, and `status`.
 - `hasStagedChanges(statusOut string) bool` — checks `git status --porcelain` output for
   staged (index) changes. Defined in `commit.go`.
 - `hasWorkingTreeChanges(statusOut string) bool` — checks porcelain output for unstaged
   working-tree changes. Defined in `add.go`.
+- `parsePorcelain(out string) []statusEntry` — splits `git status --porcelain` output into
+  `statusEntry` values (x byte, y byte, path string). Defined in `status.go`.
+- `collectRepoStatus(dir string) (repoStatus, error)` — retrieves the branch name and
+  classifies each porcelain entry as staged, unstaged, or untracked. Defined in `status.go`.
 
 ---
 
@@ -172,6 +179,15 @@ Never use:
   arguments are provided, only the named submodules are committed. The `runCommit` function
   accepts `message` and `noVerify` as explicit parameters (not from global flag state) so
   tests can run in parallel without races, following the same pattern as `runTrack`.
+
+- **`status` prints one section per repository.** The umbrella is always shown first, followed
+  by each submodule in registration order. Each section header is `<label> — <branch>` underlined
+  with `─` box-drawing characters (rune-count matched via `unicode/utf8`). Staged, unstaged, and
+  untracked entries are printed under their respective headings, mirroring `git status` output.
+  Submodules whose working-tree directory does not exist on disk are shown as "not initialized"
+  via `printNotInitialized`. Branch detection uses `git symbolic-ref --short HEAD` so that new
+  repos with no commits report the correct branch name; detached HEAD falls back to
+  `rev-parse --short HEAD`.
 
 - **New subcommands** belong in `cmd/<name>.go` and must be registered in `cmd/root.go`'s
   `init()`.

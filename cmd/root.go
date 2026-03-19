@@ -47,4 +47,5 @@ func init() {
 	rootCmd.AddCommand(syncCmd)
 	rootCmd.AddCommand(pullCmd)
 	rootCmd.AddCommand(pushCmd)
+	rootCmd.AddCommand(statusCmd)
 }
