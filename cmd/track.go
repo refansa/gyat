@@ -11,6 +11,7 @@ import (
 )
 
 var trackBranch string
+var trackSingleBranch bool
 
 var trackCmd = &cobra.Command{
 	Use:   "track <repo> [path]",
@@ -87,6 +88,12 @@ func runTrack(dir, branch string, cmd *cobra.Command, args []string) error {
 		gitArgs = append(gitArgs, "--branch", branch)
 	}
 
+	if trackSingleBranch {
+		// Pass through --single-branch to limit the clone to the tip of the
+		// requested branch. This mirrors `git clone --single-branch`.
+		gitArgs = append(gitArgs, "--single-branch")
+	}
+
 	gitArgs = append(gitArgs, source)
 
 	if len(args) == 2 {
@@ -98,4 +105,5 @@ func runTrack(dir, branch string, cmd *cobra.Command, args []string) error {
 
 func init() {
 	trackCmd.Flags().StringVarP(&trackBranch, "branch", "b", "", "Branch of the submodule repository to track")
+	trackCmd.Flags().BoolVar(&trackSingleBranch, "single-branch", false, "Clone only the history leading to the tip of the branch")
 }
