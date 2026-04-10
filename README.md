@@ -115,6 +115,10 @@ Most workspace-aware commands share the same target selection flags:
 | `--root-only` | Target only the umbrella repository |
 | `--continue-on-error` | Keep going across the remaining targets after a failure |
 
+Some workspace-aware commands also expose `--parallel` when parallel fan-out
+is a good fit for that command. Treat `--parallel` as command-specific rather
+than universal; each command's help text is the source of truth.
+
 These flags are used by commands such as `exec`, `status`, `list`, `add`,
 `commit`, `pull`, `push`, `update`, `sync`, `rm`, and `untrack`. Commands keep
 their own default root behavior: for example, `status`, `pull`, `push`, `sync`,
@@ -177,6 +181,10 @@ gyat list --root-only
 
 Show working tree status across the umbrella repository and tracked repos.
 
+In interactive terminals, `gyat status` pages the rendered report
+automatically. Use `--no-pager` to print directly to stdout, and note that
+redirected or piped output bypasses the pager automatically.
+
 ```sh
 # Umbrella repository + all tracked repos
 gyat status
@@ -186,6 +194,9 @@ gyat status --repo auth --no-root
 
 # Only the umbrella repository
 gyat status --root-only
+
+# Print directly without paging
+gyat status --no-pager
 ```
 
 Each target gets its own section that mirrors `git status`: staged changes,
@@ -208,7 +219,8 @@ gyat exec --repo auth --no-root -- git rev-parse --abbrev-ref HEAD
 ```
 
 `exec` is the most generic multi-repo primitive in gyat. When the command you
-want is not built in, start here.
+want is not built in, start here. `exec` currently runs targets in resolved
+order and prints one output block per target.
 
 ### `gyat add`
 
@@ -257,7 +269,8 @@ gyat commit -m "wip" --no-verify
 With no path arguments, gyat commits every tracked repo that currently has
 staged changes and then commits the umbrella repository if it also has staged
 changes. Root paths or `--root-only` can be used to commit the umbrella
-repository by itself.
+repository by itself. `commit` currently walks selected targets in deterministic
+order.
 
 ### `gyat pull` and `gyat push`
 
@@ -275,7 +288,8 @@ gyat push --repo auth --no-root
 ```
 
 Tracked repos that use a local-path remote are skipped with a hint, since there
-is no portable remote to pull from or push to.
+is no portable remote to pull from or push to. `pull` and `push` currently walk
+selected targets in deterministic order.
 
 ### `gyat update`
 
@@ -293,7 +307,9 @@ gyat update --root-only
 ```
 
 If a repo has `branch` set in `.gyat`, gyat updates it from `origin/<branch>`.
-Otherwise it uses the repo's current tracking branch.
+Otherwise it uses the repo's current tracking branch. `update` currently walks
+selected targets in deterministic order and excludes the umbrella root unless
+you pass `--root-only`.
 
 ### `gyat sync`
 
@@ -368,6 +384,9 @@ to `internal/git`:
 
 - `git.Run(...)` captures stdout and returns `(string, error)`. It is used when output must be parsed, such as `git status`, branch detection, or remote configuration.
 - `git.RunInteractive(...)` passes stdin/stdout/stderr through directly for commands that should stream live output, such as `pull`, `push`, and `update`.
+
+Ordered fan-out and optional parallel execution live in `internal/workspace`.
+Only commands that opt into `--parallel` expose it.
 
 ## License
 

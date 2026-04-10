@@ -285,3 +285,91 @@ func TestRunStatus_WithParallelPreservesSectionOrder(t *testing.T) {
 		t.Fatalf("expected 3 clean sections, got:\n%s", out)
 	}
 }
+
+func TestRunStatus_NoPagerFlagPrintsDirectly(t *testing.T) {
+	skipIfNoGit(t)
+
+	umbrella, _ := setupTrackedWorkspaceRepo(t, "svc-status-v2-no-pager")
+
+	oldDetector := pagerTerminalDetector
+	oldLookup := pagerLookupEnv
+	oldRunner := pagerRunner
+	t.Cleanup(func() {
+		pagerTerminalDetector = oldDetector
+		pagerLookupEnv = oldLookup
+		pagerRunner = oldRunner
+	})
+
+	pagerTerminalDetector = func(io.Writer) bool { return true }
+	pagerLookupEnv = func(string) (string, bool) {
+		return "less -FRX", true
+	}
+	pagerCalled := false
+	pagerRunner = func(io.Writer, io.Writer, string, pagerCommand) error {
+		pagerCalled = true
+		return nil
+	}
+
+	var stdoutBuf bytes.Buffer
+	sc := &cobra.Command{}
+	sc.SetOut(&stdoutBuf)
+	sc.SetErr(io.Discard)
+	sc.Flags().Bool(noPagerFlagName, false, "")
+	if err := sc.Flags().Set(noPagerFlagName, "true"); err != nil {
+		t.Fatalf("set %s: %v", noPagerFlagName, err)
+	}
+
+	if err := runStatus(umbrella, sc, nil); err != nil {
+		t.Fatalf("runStatus: %v", err)
+	}
+	if pagerCalled {
+		t.Fatal("expected --no-pager to bypass the pager")
+	}
+	if !strings.Contains(stdoutBuf.String(), "umbrella repository") {
+		t.Fatalf("expected direct status output, got:\n%s", stdoutBuf.String())
+	}
+}
+
+func TestRunStatus_PagesRenderedReport(t *testing.T) {
+	skipIfNoGit(t)
+
+	umbrella, _ := setupTrackedWorkspaceRepo(t, "svc-status-v2-paged")
+
+	oldDetector := pagerTerminalDetector
+	oldLookup := pagerLookupEnv
+	oldRunner := pagerRunner
+	t.Cleanup(func() {
+		pagerTerminalDetector = oldDetector
+		pagerLookupEnv = oldLookup
+		pagerRunner = oldRunner
+	})
+
+	pagerTerminalDetector = func(io.Writer) bool { return true }
+	pagerLookupEnv = func(string) (string, bool) {
+		return "less -FRX", true
+	}
+
+	var pagedContent string
+	pagerRunner = func(_ io.Writer, _ io.Writer, content string, _ pagerCommand) error {
+		pagedContent = content
+		return nil
+	}
+
+	var stdoutBuf bytes.Buffer
+	sc := &cobra.Command{}
+	sc.SetOut(&stdoutBuf)
+	sc.SetErr(io.Discard)
+
+	if err := runStatus(umbrella, sc, nil); err != nil {
+		t.Fatalf("runStatus: %v", err)
+	}
+	if pagedContent == "" {
+		t.Fatal("expected rendered status report to be sent to pager")
+	}
+	if !strings.Contains(pagedContent, "umbrella repository") || !strings.Contains(pagedContent, "svc-status-v2-paged") {
+		t.Fatalf("unexpected paged content:\n%s", pagedContent)
+	}
+	if stdoutBuf.Len() != 0 {
+		t.Fatalf("expected pager path to bypass direct stdout writes, got:\n%s", stdoutBuf.String())
+	}
+}

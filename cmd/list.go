@@ -61,7 +61,7 @@ func runListWorkspace(ws workspace.Workspace, flags workspaceTargetFlags, cmd *c
 		return nil
 	}
 
-	targets, err := ws.ResolveTargets(flags.targetOptions(flags.rootOnly, nil))
+	targets, err := ws.ResolveTargets(flags.targetOptions(true, nil))
 	if err != nil {
 		return err
 	}

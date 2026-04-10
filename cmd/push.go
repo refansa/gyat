@@ -18,6 +18,8 @@ var pushCmd = &cobra.Command{
 	Long: `Push local commits to the remote for all or specified tracked repos and the
 umbrella repository.
 
+The command walks the selected targets in deterministic order.
+
 With no arguments, every cloned tracked repo is pushed, then the umbrella
 repository is pushed if a remote is configured.
 

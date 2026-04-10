@@ -15,6 +15,10 @@ var updateCmd = &cobra.Command{
 	Short: "Update tracked repos to their latest remote commit",
 	Long: `Update one or more tracked repos to the latest commit on their tracked remote branch.
 
+The command walks the selected targets in deterministic order. By default it
+updates tracked repos only; use --root-only to target just the umbrella
+repository.
+
 If paths are provided, only the selected tracked repos are updated.
 If no paths are provided, all tracked repos are updated.
 

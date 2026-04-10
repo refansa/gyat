@@ -16,10 +16,13 @@ var execCmd = &cobra.Command{
 	Short: "Run a command across the umbrella workspace and managed repos",
 	Long: `Run an external command across the current gyat workspace.
 
-By default the command runs in the umbrella repository first and then in every
-managed repo listed in .gyat. Use --repo and --group to narrow the repo set,
---no-root to exclude the umbrella repository, or --root-only to target only
-the umbrella repository.
+By default the command runs in target order: the umbrella repository first and
+then every managed repo listed in .gyat. Use --repo and --group to narrow the
+repo set, --no-root to exclude the umbrella repository, or --root-only to
+target only the umbrella repository.
+
+Use --continue-on-error to keep running the command in later targets after one
+target fails.
 
 When command arguments contain flags of their own, place "--" before the
 command so gyat stops parsing exec flags.`,

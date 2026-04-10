@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -23,6 +24,9 @@ changes, unstaged changes, and untracked files are listed under clearly
 labelled headings. Repositories listed in .gyat but missing on disk are flagged
 with "not cloned".
 
+In interactive terminals, the report is paged automatically. Use '--no-pager'
+to print directly to stdout instead.
+
 Without selector flags, status shows the umbrella repository followed by every
 tracked repo. Use positional repo names or paths, '--repo', and '--group' to
 narrow the repo set, '--no-root' to exclude the umbrella repository, or
@@ -38,6 +42,9 @@ narrow the repo set, '--no-root' to exclude the umbrella repository, or
 
 	# Show only the umbrella repository
 	gyat status --root-only
+
+	# Print directly without a pager
+	gyat status --no-pager
 
   # Show status for a repo selected by name
   gyat status auth`,
@@ -74,6 +81,7 @@ type statusTargetResult struct {
 
 func init() {
 	bindWorkspaceParallelFlag(statusCmd)
+	bindNoPagerFlag(statusCmd)
 }
 
 // parsePorcelain parses the output of "git status --porcelain" into a slice of
@@ -229,6 +237,7 @@ func runStatusWithFlags(dir string, flags workspaceTargetFlags, cmd *cobra.Comma
 func runStatusWorkspace(ws workspace.Workspace, flags workspaceTargetFlags, cmd *cobra.Command, args []string) error {
 	stdout := cmd.OutOrStdout()
 	errout := cmd.ErrOrStderr()
+	var report bytes.Buffer
 	var failures commandFailures
 
 	targets, err := ws.ResolveTargets(flags.targetOptions(true, args))
@@ -270,11 +279,15 @@ func runStatusWorkspace(ws workspace.Workspace, flags workspaceTargetFlags, cmd 
 		}
 
 		if result.Value.unavailable != "" {
-			printUnavailableRepo(stdout, result.Value.label, result.Value.unavailable)
+			printUnavailableRepo(&report, result.Value.label, result.Value.unavailable)
 			continue
 		}
 
-		printRepoSection(stdout, result.Value.label, result.Value.status)
+		printRepoSection(&report, result.Value.label, result.Value.status)
+	}
+
+	if err := writeMaybePagedOutput(stdout, errout, report.String(), noPagerEnabled(cmd)); err != nil {
+		return err
 	}
 
 	if len(ws.Manifest.Repos) == 0 && !flags.rootOnly && !flags.noRoot {

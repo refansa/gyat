@@ -19,6 +19,8 @@ var pullCmd = &cobra.Command{
 	Long: `Pull the latest commits from the remote for all or specified tracked repos and
 the umbrella repository.
 
+The command walks the selected targets in deterministic order.
+
 With no arguments, every cloned tracked repo is pulled, then the umbrella
 repository is pulled if an upstream tracking branch is configured.
 

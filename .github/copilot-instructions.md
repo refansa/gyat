@@ -2,9 +2,9 @@
 
 ## Project Overview
 
-`gyat` (Git Your Ass Together) is a CLI tool written in Go that manages git submodules across
-multiple related repositories. It is a thin, opinionated wrapper around `git submodule` commands,
-designed to feel familiar to anyone who already uses git.
+`gyat` (Git Your Ass Together) is a CLI tool written in Go that manages normal git repositories
+inside a shared umbrella workspace. It keeps workspace state in a `.gyat` manifest and provides
+multi-repo git workflows without turning child repositories into submodules.
 
 The guiding principle: **gyat should feel like a natural extension of git, not a separate tool.**
 
@@ -31,7 +31,7 @@ go install .
 
 ## Tests
 
-Tests exist across two packages. Run them with:
+Tests exist across the command and internal packages. Run them with:
 
 ```sh
 go test ./...                              # full suite
@@ -44,7 +44,7 @@ Test layout:
 - `internal/git/git_test.go` — unit tests for `Run` and error wrapping behaviour
 - `cmd/testhelper_test.go`   — shared helpers: repo setup, stdout/stderr capture, assertions
 - `cmd/<command>_test.go`    — per-command tests (unit + integration)
-- `cmd/integration_test.go`  — full end-to-end workflow tests (init → add → list → untrack)
+- `cmd/integration_test.go`  — full end-to-end workflow tests (init → track → list → untrack)
 
 Integration tests spin up real git repositories inside `t.TempDir()` directories and call the
 `run*` functions directly. They do not touch the network or any repository outside the temp dir.
@@ -61,19 +61,21 @@ into the test repo, and call `run<Command>()` directly rather than going through
 ```
 main.go                  → calls cmd.Execute(), prints errors to stderr, exits with code 1
 cmd/root.go              → defines rootCmd, registers all subcommands in init()
-cmd/<command>.go         → one file per subcommand (add, commit, init, list, untrack, status, sync, update)
+cmd/<command>.go         → one file per subcommand (init, track, list, status, exec, add, commit, pull, push, update, sync, rm, untrack)
 internal/git/git.go      → the only git abstraction: Run() and RunInteractive()
+internal/manifest/*.go   → .gyat schema, normalization, and validation
+internal/workspace/*.go  → workspace discovery, target selection, .gitignore sync, and fan-out execution
 ```
 
 ### The two execution modes in `internal/git`
 
 - `git.Run(args...)` — captures stdout, returns `(string, error)`. Stderr is folded into the
-  error on failure. Use this when the output needs to be parsed (e.g. reading `.gitmodules`
-  config, parsing `submodule status`).
+  error on failure. Use this when the output needs to be parsed (e.g. reading `git status`,
+  branch detection, manifest-related repo configuration, or remote settings).
 
 - `git.RunInteractive(args...)` — passes stdin/stdout/stderr straight through to the terminal.
   Use this when the command produces live output, progress bars, or credential prompts
-  (e.g. `add`, `update`, `sync`).
+  (e.g. `pull`, `push`, `update`, cloning flows in `track`).
 
 ### Per-command file structure
 
@@ -89,11 +91,12 @@ Each command file follows the same pattern:
 
 Some functions are shared between command files within the `cmd` package:
 
-- `allSubmodulePaths(dir string) ([]string, error)` — reads every submodule path from
-  `.gitmodules`. Used by `add`, `commit`, and `status`.
-- `resolveTargetPaths(submodulePaths, args []string) ([]string, error)` — returns the
-  submodule paths to operate on: all registered paths when `args` is empty, otherwise
-  only the validated subset named in `args`. Used by `pull`, `push`, and `status`.
+- `resolveWorkspaceRepoSelectors(ws, startDir, args)` — resolves positional repo arguments into
+  tracked repo selectors. Used by `pull`, `push`, `sync`, `update`, and `untrack`.
+- `workspaceRepoByPath(ws, path)` — looks up a manifest repo from a resolved workspace target.
+- `execDir()` — determines the directory gyat should treat as the workspace root when invoked.
+- `sharedTargetFlags` and helpers in `cmd/target_flags.go` — bind shared selector flags and
+  command run options such as `--continue-on-error` and, for some commands, `--parallel`.
 - `hasStagedChanges(statusOut string) bool` — checks `git status --porcelain` output for
   staged (index) changes. Defined in `commit.go`.
 - `hasWorkingTreeChanges(statusOut string) bool` — checks porcelain output for unstaged
@@ -125,11 +128,11 @@ The rule: if the user might pipe the output, it goes to stdout. Everything else 
 
 ```go
 // Correct
-fmt.Fprintln(os.Stderr, "removing submodule 'auth'...")
+fmt.Fprintln(os.Stderr, "removing tracked repository 'auth'...")
 fmt.Println(tableRow)
 
 // Wrong
-fmt.Println("removing submodule 'auth'...")     // progress on stdout
+fmt.Println("removing tracked repository 'auth'...") // progress on stdout
 fmt.Fprintln(os.Stderr, tableRow)               // data on stderr
 ```
 
@@ -139,11 +142,11 @@ Follow git's style exactly:
 
 | Type       | Format                                                              | Example                                                         |
 |------------|---------------------------------------------------------------------|-----------------------------------------------------------------|
-| Progress   | lowercase, ends with `...`                                          | `syncing submodule URLs...`                                     |
-| Completion | lowercase, no trailing punctuation                                  | `removed submodule 'auth'`                                      |
+| Progress   | lowercase, ends with `...`                                          | `syncing tracked repository URLs...`                            |
+| Completion | lowercase, no trailing punctuation                                  | `removed tracked repository 'auth'`                             |
 | Warning    | `warning:` prefix, lowercase                                        | `warning: 'path' is an absolute path and will only work on this machine` |
 | Hint       | `hint:` prefix, lowercase, no trailing punctuation                  | `hint: use 'gyat add <repo>' to start adding repositories`      |
-| Fatal      | return an `error` — cobra prints it prefixed with `Error:` already  | `return fmt.Errorf("failed to deinit submodule: %w", err)`      |
+| Fatal      | return an `error` — cobra prints it prefixed with `Error:` already  | `return fmt.Errorf("updating '%s': %w", repo.Path, err)`       |
 
 Never use:
 - Sentence-case or title-case for progress/completion/hint messages
@@ -160,34 +163,36 @@ Never use:
 - **Errors bubble via `RunE`.** Commands use `RunE` (not `Run`) so errors propagate naturally to
   `main.go`, which prints to stderr and exits with code 1.
 
+- **Workspace contract.** `.gyat` is the source of truth for tracked repository paths, remotes,
+  branches, and groups. The umbrella root remains a normal git repo, and tracked children remain
+  normal git repos cloned inside the workspace.
+
 - **Local path transport fix.** Git 2.38.1+ blocks local file transport by default
-  (CVE-2022-39253). When `isLocalPath(source)` is true, prepend
-  `-c protocol.file.allow=always` to the git args before `submodule add`.
+  (CVE-2022-39253). When a git operation must talk to a local-path remote, prepend
+  `-c protocol.file.allow=always` to the git args.
 
-- **`untrack` does the full three-step cleanup** manually:
-  1. `git submodule deinit -f <path>`
-  2. `os.RemoveAll(.git/modules/<path>)`
-  3. `git rm -f <path>`
-  This is intentional — git has no single command for clean submodule removal.
+- **`track` clones and registers repositories.** It resolves local versus remote sources,
+  writes the manifest entry, and reconciles the gyat-managed `.gitignore` block. Prefer
+  relative local paths over absolute ones for portability.
 
-- **`list` parses `.gitmodules` directly** via `git config -f .gitmodules` rather than relying
-  on porcelain output, so it can surface URL and branch metadata alongside status.
+- **`sync` reconciles declared workspace state.** It updates origin URLs from `.gyat`, clones
+  missing tracked repos, and syncs the managed `.gitignore` block at the umbrella root.
 
-- **`commit` cascades from submodules to umbrella.** It first commits each submodule that has
-  staged changes, then stages the updated submodule refs (`git add <path>`) in the umbrella
-  repository, and finally commits the umbrella — all with the same message. When path
-  arguments are provided, only the named submodules are committed. The `runCommit` function
-  accepts `message` and `noVerify` as explicit parameters (not from global flag state) so
-  tests can run in parallel without races, following the same pattern as `runTrack`.
+- **`untrack` removes tracked repos from the workspace.** It deletes the repo working tree,
+  removes the manifest entry, and reconciles the gyat-managed `.gitignore` block.
 
-- **`status` prints one section per repository.** The umbrella is always shown first, followed
-  by each submodule in registration order. Each section header is `<label> — <branch>` underlined
-  with `─` box-drawing characters (rune-count matched via `unicode/utf8`). Staged, unstaged, and
-  untracked entries are printed under their respective headings, mirroring `git status` output.
-  Submodules whose working-tree directory does not exist on disk are shown as "not initialized"
-  via `printNotInitialized`. Branch detection uses `git symbolic-ref --short HEAD` so that new
-  repos with no commits report the correct branch name; detached HEAD falls back to
-  `rev-parse --short HEAD`.
+- **`commit` reuses one message across selected repos.** It commits staged changes in selected
+  tracked repos and then the umbrella repository when it also has staged changes. The
+  `runCommit` function accepts `message` and `noVerify` as explicit parameters so tests can run
+  in parallel without races.
+
+- **`status` prints one section per repository.** The umbrella is shown first when included,
+  followed by tracked repos in registration order. Each section header is `<label> — <branch>`
+  underlined with `─` box-drawing characters (rune-count matched via `unicode/utf8`). Staged,
+  unstaged, and untracked entries are printed under their respective headings, mirroring
+  `git status` output. Repos missing on disk are shown as `not cloned`. Branch detection uses
+  `git symbolic-ref --short HEAD` so that new repos with no commits report the correct branch
+  name; detached HEAD falls back to `rev-parse --short HEAD`.
 
 - **New subcommands** belong in `cmd/<name>.go` and must be registered in `cmd/root.go`'s
   `init()`.

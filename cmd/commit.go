@@ -21,6 +21,9 @@ var commitCmd = &cobra.Command{
 	Short: "Commit staged changes across tracked repos and the umbrella repository",
 	Long: `Commit staged changes in tracked repos and the umbrella repository.
 
+The command walks the selected targets in deterministic order and reuses the
+same commit message in each repository it commits.
+
 With no arguments, every tracked repo that has staged changes is committed,
 followed by the umbrella repository if it also has staged changes.
 
@@ -34,7 +37,7 @@ repo. Workspace-root paths commit the umbrella repository.`,
   gyat commit -m "fix: typo" services/auth services/billing
 
   # Commit only the umbrella repository
-  gyat commit -m "chore: update workspace docs" .gitignore
+	gyat commit -m "chore: update workspace docs" --root-only
 
   # Skip git hooks
   gyat commit -m "wip" --no-verify`,
