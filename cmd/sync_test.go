@@ -92,3 +92,32 @@ func TestRunSync_WorkspaceInvalidSelector(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestRunSync_WithParallelClonesReposInOrder(t *testing.T) {
+	t.Parallel()
+	skipIfNoGit(t)
+
+	umbrella, repoDirs := setupTrackedWorkspaceRepos(t, "svc-sync-v2-parallel-a", "svc-sync-v2-parallel-b")
+	for _, repoDir := range repoDirs {
+		if err := os.RemoveAll(repoDir); err != nil {
+			t.Fatalf("RemoveAll: %v", err)
+		}
+	}
+
+	var stderrBuf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetErr(&stderrBuf)
+
+	if err := runSyncWithFlagsFrom(umbrella, umbrella, workspaceTargetFlags{parallel: true}, cmd, nil); err != nil {
+		t.Fatalf("runSyncWithFlagsFrom: %v", err)
+	}
+
+	assertPathExists(t, repoDirs["svc-sync-v2-parallel-a"])
+	assertPathExists(t, repoDirs["svc-sync-v2-parallel-b"])
+	errOut := stderrBuf.String()
+	first := strings.Index(errOut, "cloning 'svc-sync-v2-parallel-a'")
+	second := strings.Index(errOut, "cloning 'svc-sync-v2-parallel-b'")
+	if first == -1 || second == -1 || first > second {
+		t.Fatalf("expected ordered clone messages, got:\n%s", errOut)
+	}
+}

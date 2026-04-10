@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRunCommandCapturesOutputPerTarget(t *testing.T) {
@@ -65,6 +66,37 @@ func TestRunCommandContinueOnError(t *testing.T) {
 	}
 	if results[1].Err == nil {
 		t.Fatal("results[1].Err = nil, want failure")
+	}
+}
+
+func TestRunTargetsPreservesOrderInParallel(t *testing.T) {
+	t.Parallel()
+
+	targets := []Target{{Label: "slow"}, {Label: "fast"}, {Label: "mid"}}
+	results, err := RunTargets(targets, RunOptions{Parallel: true}, func(target Target) (string, error) {
+		switch target.Label {
+		case "slow":
+			time.Sleep(20 * time.Millisecond)
+		case "mid":
+			time.Sleep(10 * time.Millisecond)
+		}
+		return target.Label, nil
+	})
+	if err != nil {
+		t.Fatalf("RunTargets: %v", err)
+	}
+
+	want := []string{"slow", "fast", "mid"}
+	if len(results) != len(want) {
+		t.Fatalf("RunTargets len = %d, want %d", len(results), len(want))
+	}
+	for index, label := range want {
+		if !results[index].Ran {
+			t.Fatalf("results[%d].Ran = false, want true", index)
+		}
+		if results[index].Value != label {
+			t.Fatalf("results[%d].Value = %q, want %q", index, results[index].Value, label)
+		}
 	}
 }
 

@@ -3,7 +3,10 @@ package workspace
 import (
 	"fmt"
 	"os/exec"
+	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 )
 
 // Command describes an external command to run across workspace targets.
@@ -21,6 +24,89 @@ func (command Command) Display() string {
 // RunOptions controls fan-out execution behavior.
 type RunOptions struct {
 	ContinueOnError bool
+	Parallel        bool
+}
+
+// TargetResult is the captured output for one target callback execution.
+type TargetResult[T any] struct {
+	Target Target
+	Value  T
+	Err    error
+	Ran    bool
+}
+
+// RunTargets executes run for each target and returns ordered results.
+func RunTargets[T any](targets []Target, options RunOptions, run func(Target) (T, error)) ([]TargetResult[T], error) {
+	if len(targets) == 0 {
+		return nil, fmt.Errorf("no targets to execute")
+	}
+	if run == nil {
+		return nil, fmt.Errorf("target runner is required")
+	}
+
+	results := make([]TargetResult[T], len(targets))
+
+	if !options.Parallel || len(targets) == 1 {
+		for index, target := range targets {
+			value, err := run(target)
+			results[index] = TargetResult[T]{
+				Target: target,
+				Value:  value,
+				Err:    err,
+				Ran:    true,
+			}
+			if err != nil && !options.ContinueOnError {
+				break
+			}
+		}
+		return results, nil
+	}
+
+	workerCount := runtime.GOMAXPROCS(0)
+	if workerCount < 1 {
+		workerCount = 1
+	}
+	if workerCount > len(targets) {
+		workerCount = len(targets)
+	}
+
+	var next atomic.Int64
+	var stop atomic.Bool
+	var wg sync.WaitGroup
+
+	wg.Add(workerCount)
+	for range workerCount {
+		go func() {
+			defer wg.Done()
+
+			for {
+				if !options.ContinueOnError && stop.Load() {
+					return
+				}
+
+				index := int(next.Add(1)) - 1
+				if index >= len(targets) {
+					return
+				}
+
+				target := targets[index]
+				value, err := run(target)
+				results[index] = TargetResult[T]{
+					Target: target,
+					Value:  value,
+					Err:    err,
+					Ran:    true,
+				}
+
+				if err != nil && !options.ContinueOnError {
+					stop.Store(true)
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+	return results, nil
 }
 
 // RunResult is the captured output for one workspace target.
@@ -35,32 +121,38 @@ func RunCommand(targets []Target, command Command, options RunOptions) ([]RunRes
 	if command.Name == "" {
 		return nil, fmt.Errorf("command name is required")
 	}
-	if len(targets) == 0 {
-		return nil, fmt.Errorf("no targets to execute")
-	}
 
-	results := make([]RunResult, 0, len(targets))
-	failures := 0
-
-	for _, target := range targets {
+	runResults, err := RunTargets(targets, options, func(target Target) (string, error) {
 		cmd := exec.Command(command.Name, command.Args...)
 		cmd.Dir = target.Dir
 		out, err := cmd.CombinedOutput()
+		return strings.TrimRight(string(out), "\r\n"), err
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	results := make([]RunResult, 0, len(runResults))
+	failures := 0
+	for _, runResult := range runResults {
+		if !runResult.Ran {
+			continue
+		}
 
 		result := RunResult{
-			Target: target,
-			Output: strings.TrimRight(string(out), "\r\n"),
-			Err:    err,
+			Target: runResult.Target,
+			Output: runResult.Value,
+			Err:    runResult.Err,
 		}
 		results = append(results, result)
 
-		if err == nil {
+		if runResult.Err == nil {
 			continue
 		}
 
 		failures++
 		if !options.ContinueOnError {
-			return results, fmt.Errorf("running %q in %q: %w", command.Display(), target.Label, err)
+			return results, fmt.Errorf("running %q in %q: %w", command.Display(), runResult.Target.Label, runResult.Err)
 		}
 	}
 

@@ -13,6 +13,7 @@ type workspaceTargetFlags struct {
 	groups          []string
 	noRoot          bool
 	rootOnly        bool
+	parallel        bool
 	continueOnError bool
 }
 
@@ -26,12 +27,23 @@ func bindWorkspaceTargetFlags(command *cobra.Command) {
 	command.PersistentFlags().BoolVar(&sharedTargetFlags.continueOnError, "continue-on-error", false, "Continue running in remaining targets after a failure")
 }
 
+func bindWorkspaceParallelFlag(command *cobra.Command) {
+	command.Flags().BoolVarP(&sharedTargetFlags.parallel, "parallel", "p", false, "Run per-repository work in parallel while preserving output order")
+}
+
 func (flags workspaceTargetFlags) hasSelection() bool {
 	return len(flags.repoSelectors) > 0 || len(flags.groups) > 0 || flags.noRoot || flags.rootOnly
 }
 
 func (flags workspaceTargetFlags) hasAny() bool {
-	return flags.hasSelection() || flags.continueOnError
+	return flags.hasSelection() || flags.parallel || flags.continueOnError
+}
+
+func (flags workspaceTargetFlags) runOptions() workspace.RunOptions {
+	return workspace.RunOptions{
+		ContinueOnError: flags.continueOnError,
+		Parallel:        flags.parallel,
+	}
 }
 
 func (flags workspaceTargetFlags) targetOptions(includeRoot bool, extraRepoSelectors []string) workspace.TargetOptions {
@@ -57,13 +69,17 @@ func (flags workspaceTargetFlags) validateUnsupported(command string) error {
 	if !flags.hasAny() {
 		return nil
 	}
-	return fmt.Errorf("%s does not support --repo, --group, --no-root, --root-only, or --continue-on-error", command)
+	return fmt.Errorf("%s does not support --repo, --group, --no-root, --root-only, --parallel, or --continue-on-error", command)
 }
 
 type commandFailures []string
 
 func (failures *commandFailures) handle(continueOnError bool, format string, args ...any) error {
 	err := fmt.Errorf(format, args...)
+	return failures.handleErr(continueOnError, err)
+}
+
+func (failures *commandFailures) handleErr(continueOnError bool, err error) error {
 	if !continueOnError {
 		return err
 	}

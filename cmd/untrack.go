@@ -9,6 +9,15 @@ import (
 	"github.com/spf13/cobra"
 )
 
+type untrackTargetResult struct {
+	message     string
+	removedPath string
+}
+
+func init() {
+	bindWorkspaceParallelFlag(untrackCmd)
+}
+
 var untrackCmd = &cobra.Command{
 	Use:   "untrack [path...]",
 	Short: "Remove a tracked repository from the current gyat workspace",
@@ -58,21 +67,37 @@ func runUntrackWorkspace(ws workspace.Workspace, startDir string, flags workspac
 
 	removedPaths := make([]string, 0, len(targets))
 	var failures commandFailures
-	for _, target := range targets {
-		if target.IsRoot {
+	results, err := workspace.RunTargets(targets, flags.runOptions(), func(target workspace.Target) (untrackTargetResult, error) {
+		result := untrackTargetResult{
+			message: fmt.Sprintf("removing tracked repository '%s'...\n", target.Path),
+		}
+		if err := os.RemoveAll(target.Dir); err != nil {
+			return result, fmt.Errorf("removing repository '%s': %w", target.Path, err)
+		}
+		result.removedPath = target.Path
+		result.message += fmt.Sprintf("untracked repository '%s'\n", target.Path)
+		return result, nil
+	})
+	if err != nil {
+		return err
+	}
+
+	for _, result := range results {
+		if !result.Ran {
 			continue
 		}
-
-		fmt.Fprintf(cmd.ErrOrStderr(), "removing tracked repository '%s'...\n", target.Path)
-		if err := os.RemoveAll(target.Dir); err != nil {
-			if handledErr := failures.handle(flags.continueOnError, "removing repository '%s': %w", target.Path, err); handledErr != nil {
+		if result.Value.message != "" {
+			fmt.Fprint(cmd.ErrOrStderr(), result.Value.message)
+		}
+		if result.Err != nil {
+			if handledErr := failures.handleErr(flags.continueOnError, result.Err); handledErr != nil {
 				return handledErr
 			}
 			continue
 		}
-
-		removedPaths = append(removedPaths, target.Path)
-		fmt.Fprintf(cmd.ErrOrStderr(), "untracked repository '%s'\n", target.Path)
+		if result.Value.removedPath != "" {
+			removedPaths = append(removedPaths, result.Value.removedPath)
+		}
 	}
 
 	if len(removedPaths) > 0 {

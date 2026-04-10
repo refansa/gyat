@@ -11,6 +11,15 @@ import (
 	"github.com/spf13/cobra"
 )
 
+type syncTargetResult struct {
+	message string
+	changed bool
+}
+
+func init() {
+	bindWorkspaceParallelFlag(syncCmd)
+}
+
 var syncCmd = &cobra.Command{
 	Use:   "sync [path...]",
 	Short: "Sync tracked repo remotes from .gyat",
@@ -62,6 +71,7 @@ func runSyncWithFlagsFrom(startDir, dir string, flags workspaceTargetFlags, cmd 
 
 	changed := 0
 	var failures commandFailures
+	repoTargets := make([]workspace.Target, 0, len(targets))
 
 	for _, target := range targets {
 		if target.IsRoot {
@@ -79,58 +89,81 @@ func runSyncWithFlagsFrom(startDir, dir string, flags workspaceTargetFlags, cmd 
 			continue
 		}
 
+		repoTargets = append(repoTargets, target)
+	}
+	if len(repoTargets) == 0 {
+		if changed == 0 {
+			fmt.Fprintln(cmd.ErrOrStderr(), "nothing to sync")
+		}
+		return failures.err("sync failed")
+	}
+
+	results, err := workspace.RunTargets(repoTargets, flags.runOptions(), func(target workspace.Target) (syncTargetResult, error) {
 		repo, ok := workspaceRepoByPath(ws, target.Path)
 		if !ok {
-			return fmt.Errorf("tracked repository '%s' not found in manifest", target.Path)
+			return syncTargetResult{}, fmt.Errorf("tracked repository '%s' not found in manifest", target.Path)
 		}
 
 		desiredURL, err := resolveManifestRepoURL(ws.RootDir, repo.URL)
 		if err != nil {
-			if handledErr := failures.handle(flags.continueOnError, "resolving URL for '%s': %w", repo.Path, err); handledErr != nil {
-				return handledErr
-			}
-			continue
+			return syncTargetResult{}, fmt.Errorf("resolving URL for '%s': %w", repo.Path, err)
 		}
 
 		if _, err := os.Stat(target.Dir); os.IsNotExist(err) {
-			fmt.Fprintf(cmd.ErrOrStderr(), "cloning '%s'...\n", repo.Path)
+			result := syncTargetResult{message: fmt.Sprintf("cloning '%s'...\n", repo.Path)}
 			cloneArgs := []string{"clone"}
 			if repo.Branch != "" {
 				cloneArgs = append(cloneArgs, "--branch", repo.Branch, "--single-branch")
 			}
 			cloneArgs = append(cloneArgs, desiredURL, target.Dir)
 			if _, err := git.Run(ws.RootDir, cloneArgs...); err != nil {
-				if handledErr := failures.handle(flags.continueOnError, "cloning '%s': %w", repo.Path, err); handledErr != nil {
-					return handledErr
-				}
-				continue
+				return result, fmt.Errorf("cloning '%s': %w", repo.Path, err)
 			}
-			changed++
-			continue
+			result.changed = true
+			return result, nil
 		} else if err != nil {
-			return err
+			return syncTargetResult{}, fmt.Errorf("checking target '%s': %w", target.Label, err)
 		}
 
 		currentURL, err := git.Run(target.Dir, "config", "--get", "remote.origin.url")
 		currentURL = strings.TrimSpace(currentURL)
 		switch {
 		case err != nil || currentURL == "":
-			fmt.Fprintf(cmd.ErrOrStderr(), "configuring origin for '%s'...\n", repo.Path)
+			result := syncTargetResult{message: fmt.Sprintf("configuring origin for '%s'...\n", repo.Path)}
 			if _, err := git.Run(target.Dir, "remote", "add", "origin", desiredURL); err != nil {
-				if handledErr := failures.handle(flags.continueOnError, "configuring origin for '%s': %w", repo.Path, err); handledErr != nil {
-					return handledErr
-				}
-				continue
+				return result, fmt.Errorf("configuring origin for '%s': %w", repo.Path, err)
 			}
-			changed++
+			result.changed = true
+			return result, nil
 		case currentURL != desiredURL:
-			fmt.Fprintf(cmd.ErrOrStderr(), "syncing remote for '%s'...\n", repo.Path)
+			result := syncTargetResult{message: fmt.Sprintf("syncing remote for '%s'...\n", repo.Path)}
 			if _, err := git.Run(target.Dir, "remote", "set-url", "origin", desiredURL); err != nil {
-				if handledErr := failures.handle(flags.continueOnError, "syncing remote for '%s': %w", repo.Path, err); handledErr != nil {
-					return handledErr
-				}
-				continue
+				return result, fmt.Errorf("syncing remote for '%s': %w", repo.Path, err)
 			}
+			result.changed = true
+			return result, nil
+		default:
+			return syncTargetResult{}, nil
+		}
+	})
+	if err != nil {
+		return err
+	}
+
+	for _, result := range results {
+		if !result.Ran {
+			continue
+		}
+		if result.Value.message != "" {
+			fmt.Fprint(cmd.ErrOrStderr(), result.Value.message)
+		}
+		if result.Err != nil {
+			if handledErr := failures.handleErr(flags.continueOnError, result.Err); handledErr != nil {
+				return handledErr
+			}
+			continue
+		}
+		if result.Value.changed {
 			changed++
 		}
 	}

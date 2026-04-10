@@ -104,3 +104,33 @@ func TestRunRm_WithRepoFlagRemovesOnlySelectedRepo(t *testing.T) {
 		t.Fatalf("expected unselected repo to remain untouched, got: %q", staged)
 	}
 }
+
+func TestRunRm_WithParallelRemovesFilesAcrossRepos(t *testing.T) {
+	t.Parallel()
+	skipIfNoGit(t)
+
+	umbrella, repoDirs := setupTrackedWorkspaceRepos(t, "svc-rm-v2-parallel-a", "svc-rm-v2-parallel-b")
+	for _, repoDir := range repoDirs {
+		filePath := filepath.Join(repoDir, "generated.txt")
+		writeFile(t, filePath, "content\n")
+		runGitIn(t, repoDir, "add", "generated.txt")
+		runGitIn(t, repoDir, "commit", "-m", "add generated file")
+	}
+
+	cmd := &cobra.Command{}
+	cmd.SetErr(io.Discard)
+	args := []string{
+		"svc-rm-v2-parallel-a/generated.txt",
+		"svc-rm-v2-parallel-b/generated.txt",
+	}
+	if err := runRmWithFlagsFrom(umbrella, umbrella, workspaceTargetFlags{parallel: true}, false, false, false, cmd, args); err != nil {
+		t.Fatalf("runRmWithFlagsFrom: %v", err)
+	}
+
+	for _, repoName := range []string{"svc-rm-v2-parallel-a", "svc-rm-v2-parallel-b"} {
+		assertPathAbsent(t, filepath.Join(repoDirs[repoName], "generated.txt"))
+		if staged := stagedFilesInDir(t, repoDirs[repoName]); !strings.Contains(staged, "generated.txt") {
+			t.Fatalf("expected %s to stage generated.txt for deletion\ngit diff --cached:\n%s", repoName, staged)
+		}
+	}
+}

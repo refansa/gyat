@@ -59,3 +59,24 @@ func TestRunUntrack_WorkspaceInvalidSelector(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestRunUntrack_WithParallelRemovesMultipleRepos(t *testing.T) {
+	t.Parallel()
+	skipIfNoGit(t)
+
+	umbrella, repoDirs := setupTrackedWorkspaceRepos(t, "search-service-v2-parallel-a", "search-service-v2-parallel-b")
+
+	cmd := &cobra.Command{}
+	cmd.SetErr(io.Discard)
+	flags := workspaceTargetFlags{parallel: true}
+	args := []string{"search-service-v2-parallel-a", "search-service-v2-parallel-b"}
+	if err := runUntrackWithFlags(umbrella, flags, cmd, args); err != nil {
+		t.Fatalf("runUntrackWithFlags: %v", err)
+	}
+
+	assertPathAbsent(t, repoDirs["search-service-v2-parallel-a"])
+	assertPathAbsent(t, repoDirs["search-service-v2-parallel-b"])
+	manifestPath := filepath.Join(umbrella, manifest.FileName)
+	assertFileNotContains(t, manifestPath, "search-service-v2-parallel-a")
+	assertFileNotContains(t, manifestPath, "search-service-v2-parallel-b")
+}

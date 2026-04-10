@@ -255,3 +255,33 @@ func TestRunStatus_WorkspaceWithSelectors(t *testing.T) {
 		t.Fatalf("did not expect unselected repo, got:\n%s", out)
 	}
 }
+
+func TestRunStatus_WithParallelPreservesSectionOrder(t *testing.T) {
+	t.Parallel()
+	skipIfNoGit(t)
+
+	umbrella, _ := setupTrackedWorkspaceRepos(t, "svc-status-v2-parallel-a", "svc-status-v2-parallel-b")
+
+	var stdoutBuf bytes.Buffer
+	sc := &cobra.Command{}
+	sc.SetOut(&stdoutBuf)
+	sc.SetErr(io.Discard)
+
+	if err := runStatusWithFlags(umbrella, workspaceTargetFlags{parallel: true}, sc, nil); err != nil {
+		t.Fatalf("runStatusWithFlags: %v", err)
+	}
+
+	out := stdoutBuf.String()
+	rootIndex := strings.Index(out, "umbrella repository")
+	repoAIndex := strings.Index(out, "svc-status-v2-parallel-a")
+	repoBIndex := strings.Index(out, "svc-status-v2-parallel-b")
+	if rootIndex == -1 || repoAIndex == -1 || repoBIndex == -1 {
+		t.Fatalf("expected root and repo sections, got:\n%s", out)
+	}
+	if !(rootIndex < repoAIndex && repoAIndex < repoBIndex) {
+		t.Fatalf("expected ordered sections, got:\n%s", out)
+	}
+	if strings.Count(out, "nothing to commit, working tree clean") != 3 {
+		t.Fatalf("expected 3 clean sections, got:\n%s", out)
+	}
+}

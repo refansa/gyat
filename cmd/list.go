@@ -22,6 +22,10 @@ type repoInfo struct {
 	status string
 }
 
+func init() {
+	bindWorkspaceParallelFlag(listCmd)
+}
+
 var listCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all repositories tracked in the current gyat workspace",
@@ -62,18 +66,30 @@ func runListWorkspace(ws workspace.Workspace, flags workspaceTargetFlags, cmd *c
 		return err
 	}
 
-	repos := make([]repoInfo, 0, len(targets))
-	for _, target := range targets {
+	results, err := workspace.RunTargets(targets, flags.runOptions(), func(target workspace.Target) (repoInfo, error) {
 		if target.IsRoot {
-			repos = append(repos, collectRootInfo(ws.RootDir))
-			continue
+			return collectRootInfo(ws.RootDir), nil
 		}
 
 		repo, ok := workspaceRepoByPath(ws, target.Path)
 		if !ok {
-			return fmt.Errorf("tracked repository '%s' not found in manifest", target.Path)
+			return repoInfo{}, fmt.Errorf("tracked repository '%s' not found in manifest", target.Path)
 		}
-		repos = append(repos, collectRepoInfo(ws.RootDir, repo))
+		return collectRepoInfo(ws.RootDir, repo), nil
+	})
+	if err != nil {
+		return err
+	}
+
+	repos := make([]repoInfo, 0, len(results))
+	for _, result := range results {
+		if !result.Ran {
+			continue
+		}
+		if result.Err != nil {
+			return result.Err
+		}
+		repos = append(repos, result.Value)
 	}
 
 	printRepoTable(stdout, repos)

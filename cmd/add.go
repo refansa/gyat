@@ -67,6 +67,15 @@ type repoStage struct {
 	files    []string
 }
 
+type stageTargetResult struct {
+	message string
+	staged  bool
+}
+
+func init() {
+	bindWorkspaceParallelFlag(addCmd)
+}
+
 // runAdd stages changes in the umbrella repository and/or tracked repos.
 // With no args it stages everything in the workspace. With args it routes each
 // path to the repository it belongs to.
@@ -92,59 +101,78 @@ func runAddWorkspace(ws workspace.Workspace, startDir string, flags workspaceTar
 		return stageSelectedWorkspace(ws, flags, cmd, args)
 	}
 	if len(args) == 0 {
-		return stageAllWorkspace(ws, flags.continueOnError, cmd)
+		return stageAllWorkspace(ws, flags.runOptions(), cmd)
 	}
-	return stageTargetedWorkspace(ws, startDir, args, flags.continueOnError, cmd)
+	return stageTargetedWorkspace(ws, startDir, args, flags.runOptions(), cmd)
 }
 
-func stageAllWorkspace(ws workspace.Workspace, continueOnError bool, cmd *cobra.Command) error {
-	staged := 0
-	var failures commandFailures
-
-	statusOut, err := git.Run(ws.RootDir, "status", "--porcelain")
+func stageAllWorkspace(ws workspace.Workspace, options workspace.RunOptions, cmd *cobra.Command) error {
+	targets, err := ws.ResolveTargets(workspace.TargetOptions{IncludeRoot: true})
 	if err != nil {
-		if handledErr := failures.handle(continueOnError, "checking umbrella status: %w", err); handledErr != nil {
-			return handledErr
-		}
-	} else if hasWorkingTreeChanges(statusOut) {
-		fmt.Fprintln(cmd.ErrOrStderr(), "staging umbrella repository...")
-		if _, err := git.Run(ws.RootDir, "add", "-A"); err != nil {
-			if handledErr := failures.handle(continueOnError, "staging umbrella root: %w", err); handledErr != nil {
-				return handledErr
-			}
-		} else {
-			staged++
-		}
+		return err
 	}
 
-	for _, repo := range ws.Manifest.Repos {
-		repoDir := filepath.Join(ws.RootDir, filepath.FromSlash(repo.Path))
-		if _, err := os.Stat(repoDir); os.IsNotExist(err) {
-			fmt.Fprintf(cmd.ErrOrStderr(), "warning: tracked repository '%s' is not cloned, skipping\n", repo.Path)
-			continue
-		} else if err != nil {
-			return err
+	staged := 0
+	var failures commandFailures
+	results, err := workspace.RunTargets(targets, options, func(target workspace.Target) (stageTargetResult, error) {
+		if target.IsRoot {
+			statusOut, err := git.Run(target.Dir, "status", "--porcelain")
+			if err != nil {
+				return stageTargetResult{}, fmt.Errorf("checking umbrella status: %w", err)
+			}
+			if !hasWorkingTreeChanges(statusOut) {
+				return stageTargetResult{}, nil
+			}
+
+			result := stageTargetResult{message: "staging umbrella repository...\n"}
+			if _, err := git.Run(target.Dir, "add", "-A"); err != nil {
+				return result, fmt.Errorf("staging umbrella root: %w", err)
+			}
+			result.staged = true
+			return result, nil
 		}
 
-		statusOut, err := git.Run(repoDir, "status", "--porcelain")
+		if _, err := os.Stat(target.Dir); os.IsNotExist(err) {
+			return stageTargetResult{message: fmt.Sprintf("warning: tracked repository '%s' is not cloned, skipping\n", target.Path)}, nil
+		} else if err != nil {
+			return stageTargetResult{}, fmt.Errorf("checking target '%s': %w", target.Label, err)
+		}
+
+		statusOut, err := git.Run(target.Dir, "status", "--porcelain")
 		if err != nil {
-			if handledErr := failures.handle(continueOnError, "checking status of '%s': %w", repo.Path, err); handledErr != nil {
-				return handledErr
-			}
-			continue
+			return stageTargetResult{}, fmt.Errorf("checking status of '%s': %w", target.Path, err)
 		}
 		if !hasWorkingTreeChanges(statusOut) {
-			continue
+			return stageTargetResult{}, nil
 		}
 
-		fmt.Fprintf(cmd.ErrOrStderr(), "staging '%s'...\n", repo.Path)
-		if _, err := git.Run(repoDir, "add", "-A"); err != nil {
-			if handledErr := failures.handle(continueOnError, "staging '%s': %w", repo.Path, err); handledErr != nil {
+		result := stageTargetResult{message: fmt.Sprintf("staging '%s'...\n", target.Path)}
+		if _, err := git.Run(target.Dir, "add", "-A"); err != nil {
+			return result, fmt.Errorf("staging '%s': %w", target.Path, err)
+		}
+		result.staged = true
+		return result, nil
+	})
+	if err != nil {
+		return err
+	}
+
+	for _, result := range results {
+		if !result.Ran {
+			continue
+		}
+		if result.Value.message != "" {
+			fmt.Fprint(cmd.ErrOrStderr(), result.Value.message)
+		}
+		if result.Err != nil {
+			if handledErr := failures.handleErr(options.ContinueOnError, result.Err); handledErr != nil {
 				return handledErr
 			}
 			continue
 		}
-		staged++
+		if result.Value.staged {
+			staged++
+		}
 	}
 
 	if staged == 0 {
@@ -162,22 +190,14 @@ func stageSelectedWorkspace(ws workspace.Workspace, flags workspaceTargetFlags, 
 
 	staged := 0
 	var failures commandFailures
-	for _, target := range targets {
-		if !target.IsRoot {
-			if _, err := os.Stat(target.Dir); os.IsNotExist(err) {
-				fmt.Fprintf(cmd.ErrOrStderr(), "warning: tracked repository '%s' is not cloned, skipping\n", target.Path)
-				continue
-			} else if err != nil {
-				if handledErr := failures.handle(flags.continueOnError, "checking target '%s': %w", target.Label, err); handledErr != nil {
-					return handledErr
-				}
-				continue
-			}
-		}
-
+	results, err := workspace.RunTargets(targets, flags.runOptions(), func(target workspace.Target) (stageTargetResult, error) {
 		label := target.Label
 		if target.IsRoot {
 			label = "umbrella repository"
+		} else if _, err := os.Stat(target.Dir); os.IsNotExist(err) {
+			return stageTargetResult{message: fmt.Sprintf("warning: tracked repository '%s' is not cloned, skipping\n", target.Path)}, nil
+		} else if err != nil {
+			return stageTargetResult{}, fmt.Errorf("checking target '%s': %w", target.Label, err)
 		}
 
 		gitArgs := []string{"add", "-A"}
@@ -187,24 +207,40 @@ func stageSelectedWorkspace(ws workspace.Workspace, flags workspaceTargetFlags, 
 		if len(args) == 0 {
 			statusOut, err := git.Run(target.Dir, "status", "--porcelain")
 			if err != nil {
-				if handledErr := failures.handle(flags.continueOnError, "checking status of '%s': %w", label, err); handledErr != nil {
-					return handledErr
-				}
-				continue
+				return stageTargetResult{}, fmt.Errorf("checking status of '%s': %w", label, err)
 			}
 			if !hasWorkingTreeChanges(statusOut) {
-				continue
+				return stageTargetResult{}, nil
 			}
 		}
 
-		fmt.Fprintf(cmd.ErrOrStderr(), "staging '%s'...\n", label)
+		result := stageTargetResult{message: fmt.Sprintf("staging '%s'...\n", label)}
 		if _, err := git.Run(target.Dir, gitArgs...); err != nil {
-			if handledErr := failures.handle(flags.continueOnError, "staging '%s': %w", label, err); handledErr != nil {
+			return result, fmt.Errorf("staging '%s': %w", label, err)
+		}
+		result.staged = true
+		return result, nil
+	})
+	if err != nil {
+		return err
+	}
+
+	for _, result := range results {
+		if !result.Ran {
+			continue
+		}
+		if result.Value.message != "" {
+			fmt.Fprint(cmd.ErrOrStderr(), result.Value.message)
+		}
+		if result.Err != nil {
+			if handledErr := failures.handleErr(flags.continueOnError, result.Err); handledErr != nil {
 				return handledErr
 			}
 			continue
 		}
-		staged++
+		if result.Value.staged {
+			staged++
+		}
 	}
 
 	if staged == 0 {
@@ -213,8 +249,7 @@ func stageSelectedWorkspace(ws workspace.Workspace, flags workspaceTargetFlags, 
 
 	return failures.err("staging failed")
 }
-
-func stageTargetedWorkspace(ws workspace.Workspace, startDir string, args []string, continueOnError bool, cmd *cobra.Command) error {
+func stageTargetedWorkspace(ws workspace.Workspace, startDir string, args []string, options workspace.RunOptions, cmd *cobra.Command) error {
 	rootArgs, repoTargets, err := classifyWorkspaceArgs(ws.RootDir, ws.Manifest.Repos, startDir, args)
 	if err != nil {
 		return err
@@ -224,27 +259,38 @@ func stageTargetedWorkspace(ws workspace.Workspace, startDir string, args []stri
 	if len(rootArgs) > 0 {
 		gitArgs := append([]string{"add", "--"}, rootArgs...)
 		if _, err := git.Run(ws.RootDir, gitArgs...); err != nil {
-			if handledErr := failures.handle(continueOnError, "staging root paths: %w", err); handledErr != nil {
+			if handledErr := failures.handle(options.ContinueOnError, "staging root paths: %w", err); handledErr != nil {
 				return handledErr
 			}
 		}
 	}
 
-	for _, repo := range ws.Manifest.Repos {
-		stage, ok := repoTargets[repo.Path]
+	repoSelectors := make([]string, 0, len(repoTargets))
+	for repoPath := range repoTargets {
+		repoSelectors = append(repoSelectors, repoPath)
+	}
+	if len(repoSelectors) == 0 {
+		return failures.err("staging failed")
+	}
+
+	targets, err := ws.ResolveTargets(workspace.TargetOptions{IncludeRoot: false, RepoSelectors: repoSelectors})
+	if err != nil {
+		return err
+	}
+
+	results, err := workspace.RunTargets(targets, options, func(target workspace.Target) (stageTargetResult, error) {
+		stage, ok := repoTargets[target.Path]
 		if !ok {
-			continue
+			return stageTargetResult{}, fmt.Errorf("tracked repository '%s' not found in stage set", target.Path)
 		}
 
-		repoDir := filepath.Join(ws.RootDir, filepath.FromSlash(repo.Path))
-		if _, err := os.Stat(repoDir); os.IsNotExist(err) {
-			fmt.Fprintf(cmd.ErrOrStderr(), "warning: tracked repository '%s' is not cloned, skipping\n", repo.Path)
-			continue
+		if _, err := os.Stat(target.Dir); os.IsNotExist(err) {
+			return stageTargetResult{message: fmt.Sprintf("warning: tracked repository '%s' is not cloned, skipping\n", target.Path)}, nil
 		} else if err != nil {
-			return err
+			return stageTargetResult{}, fmt.Errorf("checking target '%s': %w", target.Label, err)
 		}
 
-		fmt.Fprintf(cmd.ErrOrStderr(), "staging '%s'...\n", repo.Path)
+		result := stageTargetResult{message: fmt.Sprintf("staging '%s'...\n", target.Path)}
 
 		var gitArgs []string
 		if stage.stageAll {
@@ -253,8 +299,24 @@ func stageTargetedWorkspace(ws workspace.Workspace, startDir string, args []stri
 			gitArgs = append([]string{"add", "--"}, stage.files...)
 		}
 
-		if _, err := git.Run(repoDir, gitArgs...); err != nil {
-			if handledErr := failures.handle(continueOnError, "staging '%s': %w", repo.Path, err); handledErr != nil {
+		if _, err := git.Run(target.Dir, gitArgs...); err != nil {
+			return result, fmt.Errorf("staging '%s': %w", target.Path, err)
+		}
+		return result, nil
+	})
+	if err != nil {
+		return err
+	}
+
+	for _, result := range results {
+		if !result.Ran {
+			continue
+		}
+		if result.Value.message != "" {
+			fmt.Fprint(cmd.ErrOrStderr(), result.Value.message)
+		}
+		if result.Err != nil {
+			if handledErr := failures.handleErr(options.ContinueOnError, result.Err); handledErr != nil {
 				return handledErr
 			}
 		}

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"io"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -69,4 +70,34 @@ func TestRunList_WorkspaceManifest(t *testing.T) {
 		t.Fatalf("expected clean status in output, got:\n%s", stdout.String())
 	}
 	assertFileContains(t, filepath.Join(umbrella, manifest.FileName), "service-search-v2")
+}
+
+func TestRunList_WithParallelPreservesRowOrder(t *testing.T) {
+	t.Parallel()
+	skipIfNoGit(t)
+
+	umbrella, _ := setupTrackedWorkspaceRepos(t, "svc-list-v2-parallel-a", "svc-list-v2-parallel-b")
+
+	var stdout bytes.Buffer
+	listCmd := &cobra.Command{}
+	listCmd.SetOut(&stdout)
+	listCmd.SetErr(io.Discard)
+
+	if err := runListWithFlags(umbrella, workspaceTargetFlags{parallel: true}, listCmd, nil); err != nil {
+		t.Fatalf("runListWithFlags: %v", err)
+	}
+
+	lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
+	if len(lines) < 5 {
+		t.Fatalf("expected header plus three rows, got:\n%s", stdout.String())
+	}
+	if !strings.HasPrefix(lines[2], ".") {
+		t.Fatalf("expected umbrella row first, got %q", lines[2])
+	}
+	if !strings.HasPrefix(lines[3], "svc-list-v2-parallel-a") {
+		t.Fatalf("expected first repo row second, got %q", lines[3])
+	}
+	if !strings.HasPrefix(lines[4], "svc-list-v2-parallel-b") {
+		t.Fatalf("expected second repo row third, got %q", lines[4])
+	}
 }

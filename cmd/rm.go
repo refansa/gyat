@@ -17,6 +17,10 @@ var (
 	rmRecursive bool
 )
 
+type rmTargetResult struct {
+	message string
+}
+
 var rmCmd = &cobra.Command{
 	Use:   "rm [path...]",
 	Short: "Remove files from the working tree and from the index",
@@ -112,30 +116,56 @@ func runRmWorkspace(ws workspace.Workspace, startDir string, flags workspaceTarg
 	}
 	sort.Strings(repos)
 
+	targets := make([]workspace.Target, 0, len(repos))
 	for _, repoPath := range repos {
-		stage := repoTargets[repoPath]
 		repo, ok := workspaceRepoByPath(ws, repoPath)
 		if !ok {
 			return fmt.Errorf("tracked repository '%s' not found in manifest", repoPath)
 		}
-		repoDir := filepath.Join(ws.RootDir, filepath.FromSlash(repo.Path))
+		targets = append(targets, workspace.Target{
+			Label:  repo.Path,
+			Dir:    filepath.Join(ws.RootDir, filepath.FromSlash(repo.Path)),
+			Name:   repo.Name,
+			Path:   repo.Path,
+			Groups: append([]string(nil), repo.Groups...),
+		})
+	}
+	if len(targets) == 0 {
+		return failures.err("rm failed")
+	}
 
+	results, err := workspace.RunTargets(targets, flags.runOptions(), func(target workspace.Target) (rmTargetResult, error) {
+		stage := repoTargets[target.Path]
 		if stage.stageAll {
-			return fmt.Errorf("to remove tracked repository '%s', use 'gyat untrack %s'", repoPath, repoPath)
+			return rmTargetResult{}, fmt.Errorf("to remove tracked repository '%s', use 'gyat untrack %s'", target.Path, target.Path)
 		}
 
-		if _, err := os.Stat(repoDir); os.IsNotExist(err) {
-			fmt.Fprintf(cmd.ErrOrStderr(), "warning: tracked repository '%s' is not cloned, skipping\n", repoPath)
-			continue
+		if _, err := os.Stat(target.Dir); os.IsNotExist(err) {
+			return rmTargetResult{message: fmt.Sprintf("warning: tracked repository '%s' is not cloned, skipping\n", target.Path)}, nil
 		} else if err != nil {
-			return err
+			return rmTargetResult{}, fmt.Errorf("checking target '%s': %w", target.Label, err)
 		}
 
-		fmt.Fprintf(cmd.ErrOrStderr(), "removing in '%s'...\n", repoPath)
-
+		result := rmTargetResult{message: fmt.Sprintf("removing in '%s'...\n", target.Path)}
 		gitArgs := buildRmArgs(cached, force, recursive, stage.files)
-		if _, err := git.Run(repoDir, gitArgs...); err != nil {
-			if handledErr := failures.handle(flags.continueOnError, "removing in '%s': %w", repoPath, err); handledErr != nil {
+		if _, err := git.Run(target.Dir, gitArgs...); err != nil {
+			return result, fmt.Errorf("removing in '%s': %w", target.Path, err)
+		}
+		return result, nil
+	})
+	if err != nil {
+		return err
+	}
+
+	for _, result := range results {
+		if !result.Ran {
+			continue
+		}
+		if result.Value.message != "" {
+			fmt.Fprint(cmd.ErrOrStderr(), result.Value.message)
+		}
+		if result.Err != nil {
+			if handledErr := failures.handleErr(flags.continueOnError, result.Err); handledErr != nil {
 				return handledErr
 			}
 		}
@@ -150,27 +180,36 @@ func removeSelectedWorkspaceTargets(ws workspace.Workspace, flags workspaceTarge
 		return err
 	}
 	var failures commandFailures
-	for _, target := range targets {
-		if !target.IsRoot {
-			if _, err := os.Stat(target.Dir); os.IsNotExist(err) {
-				fmt.Fprintf(cmd.ErrOrStderr(), "warning: tracked repository '%s' is not cloned, skipping\n", target.Path)
-				continue
-			} else if err != nil {
-				if handledErr := failures.handle(flags.continueOnError, "checking target '%s': %w", target.Label, err); handledErr != nil {
-					return handledErr
-				}
-				continue
-			}
-		}
-
+	results, err := workspace.RunTargets(targets, flags.runOptions(), func(target workspace.Target) (rmTargetResult, error) {
 		label := target.Label
 		if target.IsRoot {
 			label = "umbrella repository"
+		} else if _, err := os.Stat(target.Dir); os.IsNotExist(err) {
+			return rmTargetResult{message: fmt.Sprintf("warning: tracked repository '%s' is not cloned, skipping\n", target.Path)}, nil
+		} else if err != nil {
+			return rmTargetResult{}, fmt.Errorf("checking target '%s': %w", target.Label, err)
 		}
-		fmt.Fprintf(cmd.ErrOrStderr(), "removing in '%s'...\n", label)
+
+		result := rmTargetResult{message: fmt.Sprintf("removing in '%s'...\n", label)}
 		gitArgs := buildRmArgs(cached, force, recursive, args)
 		if _, err := git.Run(target.Dir, gitArgs...); err != nil {
-			if handledErr := failures.handle(flags.continueOnError, "removing in '%s': %w", label, err); handledErr != nil {
+			return result, fmt.Errorf("removing in '%s': %w", label, err)
+		}
+		return result, nil
+	})
+	if err != nil {
+		return err
+	}
+
+	for _, result := range results {
+		if !result.Ran {
+			continue
+		}
+		if result.Value.message != "" {
+			fmt.Fprint(cmd.ErrOrStderr(), result.Value.message)
+		}
+		if result.Err != nil {
+			if handledErr := failures.handleErr(flags.continueOnError, result.Err); handledErr != nil {
 				return handledErr
 			}
 		}
@@ -180,6 +219,7 @@ func removeSelectedWorkspaceTargets(ws workspace.Workspace, flags workspaceTarge
 }
 
 func init() {
+	bindWorkspaceParallelFlag(rmCmd)
 	rmCmd.Flags().BoolVar(&rmCached, "cached", false, "Use this option to unstage and remove paths only from the index")
 	rmCmd.Flags().BoolVarP(&rmForce, "force", "f", false, "Override the up-to-date check")
 	rmCmd.Flags().BoolVarP(&rmRecursive, "r", "r", false, "Allow recursive removal when a leading directory name is given")

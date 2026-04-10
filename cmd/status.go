@@ -66,6 +66,16 @@ type repoStatus struct {
 	untracked []statusEntry
 }
 
+type statusTargetResult struct {
+	label       string
+	unavailable string
+	status      repoStatus
+}
+
+func init() {
+	bindWorkspaceParallelFlag(statusCmd)
+}
+
 // parsePorcelain parses the output of "git status --porcelain" into a slice of
 // statusEntry values. Lines shorter than four bytes (minimum "XY PATH") are
 // silently skipped.
@@ -226,28 +236,45 @@ func runStatusWorkspace(ws workspace.Workspace, flags workspaceTargetFlags, cmd 
 		return err
 	}
 
-	for _, target := range targets {
-		if !target.IsRoot {
-			if _, statErr := os.Stat(target.Dir); os.IsNotExist(statErr) {
-				printUnavailableRepo(stdout, target.Path, "not cloned")
-				continue
-			}
+	results, err := workspace.RunTargets(targets, flags.runOptions(), func(target workspace.Target) (statusTargetResult, error) {
+		label := target.Path
+		if target.IsRoot {
+			label = "umbrella repository"
+		} else if _, statErr := os.Stat(target.Dir); os.IsNotExist(statErr) {
+			return statusTargetResult{label: target.Path, unavailable: "not cloned"}, nil
+		} else if statErr != nil {
+			return statusTargetResult{label: label}, fmt.Errorf("stat '%s': %w", target.Label, statErr)
 		}
 
 		rs, err := collectRepoStatus(target.Dir)
 		if err != nil {
-			if handledErr := failures.handle(flags.continueOnError, "could not get status of '%s': %w", target.Label, err); handledErr != nil {
+			return statusTargetResult{label: label}, fmt.Errorf("could not get status of '%s': %w", target.Label, err)
+		}
+
+		return statusTargetResult{label: label, status: rs}, nil
+	})
+	if err != nil {
+		return err
+	}
+
+	for _, result := range results {
+		if !result.Ran {
+			continue
+		}
+		if result.Err != nil {
+			if handledErr := failures.handleErr(flags.continueOnError, result.Err); handledErr != nil {
 				return handledErr
 			}
-			fmt.Fprintf(errout, "warning: could not get status of '%s': %v\n", target.Label, err)
+			fmt.Fprintf(errout, "warning: %v\n", result.Err)
 			continue
 		}
 
-		if target.IsRoot {
-			printRepoSection(stdout, "umbrella repository", rs)
+		if result.Value.unavailable != "" {
+			printUnavailableRepo(stdout, result.Value.label, result.Value.unavailable)
 			continue
 		}
-		printRepoSection(stdout, target.Path, rs)
+
+		printRepoSection(stdout, result.Value.label, result.Value.status)
 	}
 
 	if len(ws.Manifest.Repos) == 0 && !flags.rootOnly && !flags.noRoot {
