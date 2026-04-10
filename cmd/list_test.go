@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/refansa/gyat/internal/manifest"
 	"github.com/spf13/cobra"
 )
 
@@ -247,4 +248,38 @@ func TestRunList_StatusColumn(t *testing.T) {
 	if !found {
 		t.Errorf("expected a known status value in list output, got:\n%s", stdout.String())
 	}
+}
+
+func TestRunList_WorkspaceManifest(t *testing.T) {
+	t.Parallel()
+	skipIfNoGit(t)
+
+	umbrella, source := newTestSetup(t, "service-search-v2")
+	ic := &cobra.Command{}
+	ic.SetErr(new(bytes.Buffer))
+	if err := runInit(umbrella, ic, nil); err != nil {
+		t.Fatalf("runInit: %v", err)
+	}
+
+	ac := &cobra.Command{}
+	ac.SetErr(new(bytes.Buffer))
+	if err := runTrack(umbrella, "", ac, []string{relPath(umbrella, source)}); err != nil {
+		t.Fatalf("runTrack: %v", err)
+	}
+
+	var stdout bytes.Buffer
+	lc := &cobra.Command{}
+	lc.SetOut(&stdout)
+	lc.SetErr(new(bytes.Buffer))
+	if err := runList(umbrella, lc, nil); err != nil {
+		t.Fatalf("runList: %v", err)
+	}
+
+	if !strings.Contains(stdout.String(), "service-search-v2") {
+		t.Fatalf("expected tracked repo path in output, got:\n%s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "clean") {
+		t.Fatalf("expected clean status in output, got:\n%s", stdout.String())
+	}
+	assertFileContains(t, filepath.Join(umbrella, manifest.FileName), "service-search-v2")
 }

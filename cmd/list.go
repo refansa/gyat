@@ -1,17 +1,22 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/refansa/gyat/internal/git"
+	"github.com/refansa/gyat/internal/manifest"
+	"github.com/refansa/gyat/internal/workspace"
 	"github.com/spf13/cobra"
 )
 
-type submoduleInfo struct {
+type repoInfo struct {
 	path   string
+	name   string
 	url    string
 	branch string
 	sha    string
@@ -20,18 +25,49 @@ type submoduleInfo struct {
 
 var listCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List all managed submodules",
-	Long:  `List all submodules tracked in this repository, along with their URL, tracked branch, current commit, and status.`,
+	Short: "List all repositories tracked in the current gyat workspace",
+	Long:  `List all repositories tracked in the current gyat workspace, along with their path, tracked branch, current commit, status, and source URL.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		dir, err := execDir()
+		dir, err := os.Getwd()
 		if err != nil {
-			return err
+			return fmt.Errorf("get current directory: %w", err)
 		}
 		return runList(dir, cmd, args)
 	},
 }
 
 func runList(dir string, cmd *cobra.Command, args []string) error {
+	ws, err := workspace.Load(dir)
+	if err == nil {
+		return runListWorkspace(ws, cmd)
+	}
+	if !errors.Is(err, workspace.ErrNotFound) {
+		return err
+	}
+
+	return runListLegacy(dir, cmd, args)
+}
+
+func runListWorkspace(ws workspace.Workspace, cmd *cobra.Command) error {
+	stdout := cmd.OutOrStdout()
+	errout := cmd.ErrOrStderr()
+
+	if len(ws.Manifest.Repos) == 0 {
+		fmt.Fprintln(stdout, "no managed repos found")
+		fmt.Fprintln(errout, "hint: use 'gyat track <repo>' to add a repository")
+		return nil
+	}
+
+	repos := make([]repoInfo, 0, len(ws.Manifest.Repos))
+	for _, repo := range ws.Manifest.Repos {
+		repos = append(repos, collectRepoInfo(ws.RootDir, repo))
+	}
+
+	printRepoTable(stdout, repos)
+	return nil
+}
+
+func runListLegacy(dir string, cmd *cobra.Command, args []string) error {
 	stdout := cmd.OutOrStdout()
 	errout := cmd.ErrOrStderr()
 
@@ -50,7 +86,7 @@ func runList(dir string, cmd *cobra.Command, args []string) error {
 	}
 
 	// Parse "submodule.<name>.path <path>" lines into a name->info map.
-	submodules := []submoduleInfo{}
+	submodules := []repoInfo{}
 	nameByPath := map[string]string{}
 
 	for _, line := range strings.Split(pathsOut, "\n") {
@@ -73,7 +109,7 @@ func runList(dir string, cmd *cobra.Command, args []string) error {
 		name := strings.TrimSuffix(withoutPrefix, ".path")
 
 		nameByPath[path] = name
-		submodules = append(submodules, submoduleInfo{path: path})
+		submodules = append(submodules, repoInfo{path: path})
 	}
 
 	// Enrich each submodule with its URL and branch from .gitmodules.
@@ -145,9 +181,51 @@ func runList(dir string, cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Print the table.
-	// Two-pass layout: measure actual column widths from the data first, then
-	// format every row with consistent %-*s padding.
+	printRepoTable(stdout, submodules)
+
+	return nil
+}
+
+func collectRepoInfo(root string, repo manifest.Repo) repoInfo {
+	info := repoInfo{
+		name: repo.Name,
+		path: repo.Path,
+		url:  repo.URL,
+	}
+	if repo.Branch == "" {
+		info.branch = "(default)"
+	} else {
+		info.branch = repo.Branch
+	}
+
+	repoDir := filepath.Join(root, filepath.FromSlash(repo.Path))
+	if _, err := os.Stat(repoDir); os.IsNotExist(err) {
+		info.sha = "?"
+		info.status = "not cloned"
+		return info
+	}
+
+	sha, err := git.Run(repoDir, "rev-parse", "--short", "HEAD")
+	if err != nil || strings.TrimSpace(sha) == "" {
+		info.sha = "?"
+	} else {
+		info.sha = sha
+	}
+
+	statusOut, err := git.Run(repoDir, "status", "--porcelain")
+	if err != nil {
+		info.status = "invalid"
+		return info
+	}
+	if strings.TrimSpace(statusOut) == "" {
+		info.status = "clean"
+		return info
+	}
+	info.status = "modified"
+	return info
+}
+
+func printRepoTable(out io.Writer, repos []repoInfo) {
 	const colPad = 3
 
 	headers := [5]string{"PATH", "BRANCH", "COMMIT", "STATUS", "URL"}
@@ -155,8 +233,8 @@ func runList(dir string, cmd *cobra.Command, args []string) error {
 	for i, h := range headers {
 		widths[i] = len(h)
 	}
-	for _, sub := range submodules {
-		vals := [5]string{sub.path, sub.branch, sub.sha, sub.status, sub.url}
+	for _, repo := range repos {
+		vals := [5]string{repo.path, repo.branch, repo.sha, repo.status, repo.url}
 		for i, v := range vals {
 			if len(v) > widths[i] {
 				widths[i] = len(v)
@@ -179,11 +257,9 @@ func runList(dir string, cmd *cobra.Command, args []string) error {
 
 	separatorWidth := widths[0] + widths[1] + widths[2] + widths[3] + widths[4] + colPad*4
 
-	fmt.Fprintln(stdout, formatRow(headers))
-	fmt.Fprintln(stdout, strings.Repeat("-", separatorWidth))
-	for _, sub := range submodules {
-		fmt.Fprintln(stdout, formatRow([5]string{sub.path, sub.branch, sub.sha, sub.status, sub.url}))
+	fmt.Fprintln(out, formatRow(headers))
+	fmt.Fprintln(out, strings.Repeat("-", separatorWidth))
+	for _, repo := range repos {
+		fmt.Fprintln(out, formatRow([5]string{repo.path, repo.branch, repo.sha, repo.status, repo.url}))
 	}
-
-	return nil
 }

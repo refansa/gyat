@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/refansa/gyat/internal/manifest"
 	"github.com/spf13/cobra"
 )
 
@@ -224,5 +225,37 @@ func TestRunUntrack_OutputMentionsPath(t *testing.T) {
 
 	if !strings.Contains(stderrBuf.String(), subName) {
 		t.Errorf("expected stderr to mention %q, got:\n%s", subName, stderrBuf.String())
+	}
+}
+
+func TestRunUntrack_WorkspaceRemovesManifestAndDirectory(t *testing.T) {
+	t.Parallel()
+	skipIfNoGit(t)
+
+	umbrella, source := newTestSetup(t, "search-service-v2")
+	ic := &cobra.Command{}
+	ic.SetErr(io.Discard)
+	if err := runInit(umbrella, ic, nil); err != nil {
+		t.Fatalf("runInit: %v", err)
+	}
+
+	ac := &cobra.Command{}
+	ac.SetErr(io.Discard)
+	if err := runTrack(umbrella, "", ac, []string{relPath(umbrella, source)}); err != nil {
+		t.Fatalf("runTrack: %v", err)
+	}
+
+	var stderrBuf bytes.Buffer
+	rc := &cobra.Command{}
+	rc.SetErr(&stderrBuf)
+	if err := runUntrack(umbrella, rc, []string{"search-service-v2"}); err != nil {
+		t.Fatalf("runUntrack: %v", err)
+	}
+
+	assertPathAbsent(t, filepath.Join(umbrella, "search-service-v2"))
+	assertFileNotContains(t, filepath.Join(umbrella, manifest.FileName), "search-service-v2")
+	assertFileNotContains(t, filepath.Join(umbrella, ".gitignore"), "/search-service-v2/")
+	if !strings.Contains(stderrBuf.String(), "untracked repository 'search-service-v2'") {
+		t.Fatalf("expected v2 untrack message, got:\n%s", stderrBuf.String())
 	}
 }

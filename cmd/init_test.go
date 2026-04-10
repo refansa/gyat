@@ -8,11 +8,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/refansa/gyat/internal/manifest"
 	"github.com/spf13/cobra"
 )
 
-// TestRunInit_EmptyDirectory verifies that gyat init creates a .git directory
-// in a fresh, empty directory.
+// TestRunInit_EmptyDirectory verifies that gyat init creates both the git
+// repository and the .gyat manifest in a fresh directory.
 func TestRunInit_EmptyDirectory(t *testing.T) {
 	t.Parallel()
 	skipIfNoGit(t)
@@ -26,11 +27,13 @@ func TestRunInit_EmptyDirectory(t *testing.T) {
 	}
 
 	assertPathExists(t, filepath.Join(dir, ".git"))
+	assertPathExists(t, filepath.Join(dir, manifest.FileName))
+	assertPathAbsent(t, filepath.Join(dir, ".gitignore"))
 }
 
-// TestRunInit_AlreadyAGitRepo verifies that running gyat init in an existing
-// git repository is idempotent — it should succeed without error.
-func TestRunInit_AlreadyAGitRepo(t *testing.T) {
+// TestRunInit_AlreadyAGitRepoCreatesManifest verifies that running gyat init in
+// an existing git repository creates the .gyat manifest if it is missing.
+func TestRunInit_AlreadyAGitRepoCreatesManifest(t *testing.T) {
 	t.Parallel()
 	skipIfNoGit(t)
 
@@ -42,10 +45,12 @@ func TestRunInit_AlreadyAGitRepo(t *testing.T) {
 	if err := runInit(dir, ic, nil); err != nil {
 		t.Fatalf("runInit on existing repo returned unexpected error: %v", err)
 	}
+
+	assertPathExists(t, filepath.Join(dir, manifest.FileName))
 }
 
-// TestRunInit_PrintsReadyMessage verifies that when there is no .gitmodules
-// file, the output tells the user to run gyat track.
+// TestRunInit_PrintsReadyMessage verifies that a new workspace prints a manifest
+// creation message and a follow-up gyat track hint.
 func TestRunInit_PrintsReadyMessage(t *testing.T) {
 	t.Parallel()
 	skipIfNoGit(t)
@@ -59,57 +64,83 @@ func TestRunInit_PrintsReadyMessage(t *testing.T) {
 		t.Errorf("runInit: %v", err)
 	}
 
+	if !strings.Contains(stderrBuf.String(), "created .gyat manifest") {
+		t.Errorf("expected stderr to mention created .gyat manifest, got:\n%s", stderrBuf.String())
+	}
 	if !strings.Contains(stderrBuf.String(), "gyat track") {
 		t.Errorf("expected hint to mention 'gyat track' on stderr, got:\n%s", stderrBuf.String())
 	}
 }
 
-// TestRunInit_WithGitmodules verifies that when a .gitmodules file is already
-// present in the directory (e.g. after a shallow clone of an umbrella repo),
-// gyat init attempts to initialise the submodules.
-func TestRunInit_WithGitmodules(t *testing.T) {
+// TestRunInit_ExistingManifestValidated verifies that an existing manifest is
+// loaded successfully and left intact when init is run again.
+func TestRunInit_ExistingManifestValidated(t *testing.T) {
 	t.Parallel()
 	skipIfNoGit(t)
 
-	// Build a full setup: umbrella with one committed submodule, then clone it.
-	umbrella, source := newTestSetup(t, "service-auth")
-
-	// Track and commit the submodule in the umbrella repo.
-	rel := relPath(umbrella, source)
-	addC := &cobra.Command{}
-	addC.SetErr(io.Discard)
-	if err := runTrack(umbrella, "", addC, []string{rel}); err != nil {
-		t.Fatalf("setup: runTrack: %v", err)
-	}
-	runGitIn(t, umbrella, "commit", "-m", "add submodule")
-
-	// Clone the umbrella without recursing into submodules.
-	cloneBase := t.TempDir()
-	runGitIn(t, cloneBase, "clone", umbrella, "cloned")
-	cloned := filepath.Join(cloneBase, "cloned")
-
-	// The submodule directory should exist but be empty before init.
-	subDir := filepath.Join(cloned, "service-auth")
-	entries, err := os.ReadDir(subDir)
-	if err != nil && !os.IsNotExist(err) {
-		t.Fatalf("read submodule dir before init: %v", err)
-	}
-	if len(entries) > 0 {
-		t.Skip("submodule was already populated — clone behaviour differs on this git version")
+	dir := newUmbrellaRepo(t)
+	if err := manifest.SaveDir(dir, manifest.File{
+		Version: manifest.SupportedVersion,
+		Ignore:  []string{"node_modules/"},
+		Repos: []manifest.Repo{{
+			Name:   "auth",
+			Path:   "services/auth",
+			URL:    "git@github.com:org/service-auth.git",
+			Branch: "main",
+		}},
+	}); err != nil {
+		t.Fatalf("SaveDir: %v", err)
 	}
 
-	// Run gyat init inside the clone — it should detect .gitmodules and
-	// initialise the submodules automatically.
 	var stderrBuf bytes.Buffer
 	ic := &cobra.Command{}
 	ic.SetErr(&stderrBuf)
-	if err := runInit(cloned, ic, nil); err != nil {
-		t.Errorf("runInit with .gitmodules: %v", err)
+	if err := runInit(dir, ic, nil); err != nil {
+		t.Fatalf("runInit with existing manifest: %v", err)
 	}
 
-	if !strings.Contains(stderrBuf.String(), ".gitmodules") {
-		t.Errorf("expected stderr to mention .gitmodules, got:\n%s", stderrBuf.String())
+	got, err := manifest.LoadDir(dir)
+	if err != nil {
+		t.Fatalf("LoadDir: %v", err)
 	}
+	if len(got.Repos) != 1 || got.Repos[0].Name != "auth" {
+		t.Fatalf("LoadDir repos = %#v, want preserved manifest", got.Repos)
+	}
+	assertFileContains(t, filepath.Join(dir, ".gitignore"), "# BEGIN gyat managed")
+	assertFileContains(t, filepath.Join(dir, ".gitignore"), "/services/auth/")
+	if !strings.Contains(stderrBuf.String(), "validated .gyat manifest") {
+		t.Errorf("expected stderr to mention validated .gyat manifest, got:\n%s", stderrBuf.String())
+	}
+	if !strings.Contains(stderrBuf.String(), "updated .gitignore managed block") {
+		t.Errorf("expected stderr to mention updated .gitignore managed block, got:\n%s", stderrBuf.String())
+	}
+}
+
+// TestRunInit_RejectsNestedWorkspace verifies that init refuses to create a
+// second workspace under an existing gyat root.
+func TestRunInit_RejectsNestedWorkspace(t *testing.T) {
+	t.Parallel()
+	skipIfNoGit(t)
+
+	root := newUmbrellaRepo(t)
+	if err := manifest.SaveDir(root, manifest.Default()); err != nil {
+		t.Fatalf("SaveDir: %v", err)
+	}
+
+	nested := filepath.Join(root, "services", "auth")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	ic := &cobra.Command{}
+	ic.SetErr(io.Discard)
+	err := runInit(nested, ic, nil)
+	if err == nil || !strings.Contains(err.Error(), "inside existing workspace") {
+		t.Fatalf("runInit error = %v, want nested workspace rejection", err)
+	}
+
+	assertPathAbsent(t, filepath.Join(nested, ".git"))
+	assertPathAbsent(t, filepath.Join(nested, manifest.FileName))
 }
 
 // TestRunInit_DotGitIsDirectory verifies that the .git entry created by init

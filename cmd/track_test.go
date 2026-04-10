@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/refansa/gyat/internal/manifest"
 	"github.com/spf13/cobra"
 )
 
@@ -212,4 +213,53 @@ func TestRunTrack_DuplicateTrack(t *testing.T) {
 	if err := runTrack(umbrella, "", &cobra.Command{}, []string{rel}); err == nil {
 		t.Error("expected an error when tracking the same submodule twice, got nil")
 	}
+}
+
+func TestRunTrack_WorkspaceAddsManifestRepo(t *testing.T) {
+	t.Parallel()
+	skipIfNoGit(t)
+
+	umbrella, source := newTestSetup(t, "service-auth-v2")
+	ic := &cobra.Command{}
+	ic.SetErr(io.Discard)
+	if err := runInit(umbrella, ic, nil); err != nil {
+		t.Fatalf("runInit: %v", err)
+	}
+
+	rel := relPath(umbrella, source)
+	var stderrBuf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetErr(&stderrBuf)
+	if err := runTrack(umbrella, "", cmd, []string{rel}); err != nil {
+		t.Fatalf("runTrack: %v", err)
+	}
+
+	assertPathExists(t, filepath.Join(umbrella, "service-auth-v2"))
+	assertFileContains(t, filepath.Join(umbrella, manifest.FileName), "service-auth-v2")
+	assertFileContains(t, filepath.Join(umbrella, ".gitignore"), "/service-auth-v2/")
+	if !strings.Contains(stderrBuf.String(), "tracked repository 'service-auth-v2'") {
+		t.Fatalf("expected tracked repository message, got:\n%s", stderrBuf.String())
+	}
+}
+
+func TestRunTrack_WorkspaceWithBranchRecordsManifest(t *testing.T) {
+	t.Parallel()
+	skipIfNoGit(t)
+
+	umbrella, source := newTestSetup(t, "service-auth-main")
+	runGitIn(t, source, "branch", "-m", "main")
+
+	ic := &cobra.Command{}
+	ic.SetErr(io.Discard)
+	if err := runInit(umbrella, ic, nil); err != nil {
+		t.Fatalf("runInit: %v", err)
+	}
+
+	rel := relPath(umbrella, source)
+	if err := runTrack(umbrella, "main", &cobra.Command{}, []string{rel, "services/auth"}); err != nil {
+		t.Fatalf("runTrack: %v", err)
+	}
+
+	assertFileContains(t, filepath.Join(umbrella, manifest.FileName), "\"branch\": \"main\"")
+	assertFileContains(t, filepath.Join(umbrella, manifest.FileName), "services/auth")
 }

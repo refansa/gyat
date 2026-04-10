@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/refansa/gyat/internal/manifest"
 	"github.com/spf13/cobra"
 )
 
@@ -489,5 +490,164 @@ func TestRunStatus_StagedAndUnstaged(t *testing.T) {
 	}
 	if !strings.Contains(out, "main.go") {
 		t.Errorf("expected 'main.go' (unstaged) in output\ngot:\n%s", out)
+	}
+}
+
+func v2StatusSetup(t *testing.T, subName string) (umbrella, subDir string) {
+	t.Helper()
+
+	umbrella, source := newTestSetup(t, subName)
+	ic := &cobra.Command{}
+	ic.SetErr(io.Discard)
+	if err := runInit(umbrella, ic, nil); err != nil {
+		t.Fatalf("runInit: %v", err)
+	}
+
+	ac := &cobra.Command{}
+	ac.SetErr(io.Discard)
+	if err := runTrack(umbrella, "", ac, []string{relPath(umbrella, source)}); err != nil {
+		t.Fatalf("runTrack: %v", err)
+	}
+
+	runGitIn(t, umbrella, "add", manifest.FileName, ".gitignore")
+	runGitIn(t, umbrella, "commit", "-m", "track workspace metadata")
+
+	return umbrella, filepath.Join(umbrella, subName)
+}
+
+func TestRunStatus_WorkspaceNoRepos(t *testing.T) {
+	t.Parallel()
+	skipIfNoGit(t)
+
+	umbrella := t.TempDir()
+	ic := &cobra.Command{}
+	ic.SetErr(io.Discard)
+	if err := runInit(umbrella, ic, nil); err != nil {
+		t.Fatalf("runInit: %v", err)
+	}
+
+	var stdoutBuf, stderrBuf bytes.Buffer
+	sc := &cobra.Command{}
+	sc.SetOut(&stdoutBuf)
+	sc.SetErr(&stderrBuf)
+
+	if err := runStatus(umbrella, sc, nil); err != nil {
+		t.Fatalf("runStatus: %v", err)
+	}
+
+	if !strings.Contains(stdoutBuf.String(), "umbrella repository") {
+		t.Fatalf("expected umbrella repository section, got:\n%s", stdoutBuf.String())
+	}
+	if !strings.Contains(stderrBuf.String(), "gyat track") {
+		t.Fatalf("expected gyat track hint, got:\n%s", stderrBuf.String())
+	}
+}
+
+func TestRunStatus_WorkspaceAllClean(t *testing.T) {
+	t.Parallel()
+	skipIfNoGit(t)
+
+	umbrella, _ := v2StatusSetup(t, "svc-status-v2-clean")
+
+	var stdoutBuf bytes.Buffer
+	sc := &cobra.Command{}
+	sc.SetOut(&stdoutBuf)
+	sc.SetErr(io.Discard)
+
+	if err := runStatus(umbrella, sc, nil); err != nil {
+		t.Fatalf("runStatus: %v", err)
+	}
+
+	out := stdoutBuf.String()
+	if !strings.Contains(out, "umbrella repository") || !strings.Contains(out, "svc-status-v2-clean") {
+		t.Fatalf("expected umbrella and repo sections, got:\n%s", out)
+	}
+	if strings.Count(out, "nothing to commit, working tree clean") != 2 {
+		t.Fatalf("expected 2 clean sections, got:\n%s", out)
+	}
+	assertFileContains(t, filepath.Join(umbrella, manifest.FileName), "svc-status-v2-clean")
+}
+
+func TestRunStatus_WorkspaceNotCloned(t *testing.T) {
+	t.Parallel()
+	skipIfNoGit(t)
+
+	umbrella, subDir := v2StatusSetup(t, "svc-status-v2-not-cloned")
+	if err := os.RemoveAll(subDir); err != nil {
+		t.Fatalf("RemoveAll: %v", err)
+	}
+
+	var stdoutBuf bytes.Buffer
+	sc := &cobra.Command{}
+	sc.SetOut(&stdoutBuf)
+	sc.SetErr(io.Discard)
+
+	if err := runStatus(umbrella, sc, nil); err != nil {
+		t.Fatalf("runStatus: %v", err)
+	}
+
+	out := stdoutBuf.String()
+	if !strings.Contains(out, "not cloned") || !strings.Contains(out, "svc-status-v2-not-cloned") {
+		t.Fatalf("expected not cloned section, got:\n%s", out)
+	}
+}
+
+func TestRunStatus_WorkspaceWithSelectors(t *testing.T) {
+	t.Parallel()
+	skipIfNoGit(t)
+
+	base := t.TempDir()
+	umbrella := filepath.Join(base, "umbrella")
+	sourceA := filepath.Join(base, "svc-status-v2-a")
+	sourceB := filepath.Join(base, "svc-status-v2-b")
+	for _, dir := range []string{umbrella, sourceA, sourceB} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("MkdirAll %s: %v", dir, err)
+		}
+	}
+	runGitIn(t, umbrella, "init")
+	runGitIn(t, umbrella, "config", "user.email", "test@gyat.test")
+	runGitIn(t, umbrella, "config", "user.name", "gyat test")
+	runGitIn(t, umbrella, "config", "commit.gpgsign", "false")
+	runGitIn(t, umbrella, "config", "core.autocrlf", "false")
+	for _, source := range []string{sourceA, sourceB} {
+		runGitIn(t, source, "init")
+		runGitIn(t, source, "config", "user.email", "test@gyat.test")
+		runGitIn(t, source, "config", "user.name", "gyat test")
+		runGitIn(t, source, "config", "commit.gpgsign", "false")
+		runGitIn(t, source, "config", "core.autocrlf", "false")
+		writeFile(t, filepath.Join(source, "main.go"), "package main\n")
+		runGitIn(t, source, "add", ".")
+		runGitIn(t, source, "commit", "-m", "initial commit")
+	}
+	ic := &cobra.Command{}
+	ic.SetErr(io.Discard)
+	if err := runInit(umbrella, ic, nil); err != nil {
+		t.Fatalf("runInit: %v", err)
+	}
+	ac := &cobra.Command{}
+	ac.SetErr(io.Discard)
+	if err := runTrack(umbrella, "", ac, []string{relPath(umbrella, sourceA)}); err != nil {
+		t.Fatalf("runTrack sourceA: %v", err)
+	}
+	if err := runTrack(umbrella, "", ac, []string{relPath(umbrella, sourceB)}); err != nil {
+		t.Fatalf("runTrack sourceB: %v", err)
+	}
+
+	var stdoutBuf bytes.Buffer
+	sc := &cobra.Command{}
+	sc.SetOut(&stdoutBuf)
+	sc.SetErr(io.Discard)
+
+	if err := runStatus(umbrella, sc, []string{"svc-status-v2-a"}); err != nil {
+		t.Fatalf("runStatus: %v", err)
+	}
+
+	out := stdoutBuf.String()
+	if !strings.Contains(out, "umbrella repository") || !strings.Contains(out, "svc-status-v2-a") {
+		t.Fatalf("expected umbrella and selected repo, got:\n%s", out)
+	}
+	if strings.Contains(out, "svc-status-v2-b") {
+		t.Fatalf("did not expect unselected repo, got:\n%s", out)
 	}
 }

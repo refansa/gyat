@@ -37,9 +37,9 @@ func TestIntegration_FullWorkflow(t *testing.T) {
 	if err := runTrack(umbrella, "", ac, []string{rel}); err != nil {
 		t.Fatalf("step 2 (gyat track %s): %v", rel, err)
 	}
-	assertPathExists(t, filepath.Join(umbrella, ".gitmodules"))
 	assertPathExists(t, filepath.Join(umbrella, "my-service"))
-	assertFileContains(t, filepath.Join(umbrella, ".gitmodules"), "my-service")
+	assertFileContains(t, filepath.Join(umbrella, ".gyat"), "my-service")
+	assertFileContains(t, filepath.Join(umbrella, ".gitignore"), "/my-service/")
 
 	// ── 3. gyat list ──────────────────────────────────────────────────────────
 
@@ -67,8 +67,8 @@ func TestIntegration_FullWorkflow(t *testing.T) {
 		t.Fatalf("step 4 (gyat untrack my-service): %v", err)
 	}
 	assertPathAbsent(t, filepath.Join(umbrella, "my-service"))
-	assertPathAbsent(t, filepath.Join(umbrella, ".git", "modules", "my-service"))
-	assertFileNotContains(t, filepath.Join(umbrella, ".gitmodules"), "my-service")
+	assertFileNotContains(t, filepath.Join(umbrella, ".gyat"), "my-service")
+	assertFileNotContains(t, filepath.Join(umbrella, ".gitignore"), "/my-service/")
 }
 
 // TestIntegration_TrackWithExplicitDestination verifies that gyat track correctly
