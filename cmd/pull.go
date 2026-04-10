@@ -45,27 +45,31 @@ fetch the latest remote commit for a detached repository.`,
 		if err != nil {
 			return err
 		}
-		return runPullFrom(startDir, dir, pullRebase, cmd, args)
+		return runPullWithFlagsFrom(startDir, dir, sharedTargetFlags, pullRebase, cmd, args)
 	},
 }
 
 // runPull pulls the latest commits for the selected tracked repos and, if an
 // upstream is configured, the umbrella repository itself.
 func runPull(dir string, rebase bool, cmd *cobra.Command, args []string) error {
-	return runPullFrom(dir, dir, rebase, cmd, args)
+	return runPullWithFlagsFrom(dir, dir, workspaceTargetFlags{}, rebase, cmd, args)
 }
 
 func runPullFrom(startDir, dir string, rebase bool, cmd *cobra.Command, args []string) error {
+	return runPullWithFlagsFrom(startDir, dir, workspaceTargetFlags{}, rebase, cmd, args)
+}
+
+func runPullWithFlagsFrom(startDir, dir string, flags workspaceTargetFlags, rebase bool, cmd *cobra.Command, args []string) error {
 	_ = dir
 	ws, err := workspace.Load(startDir)
 	if err != nil {
 		return err
 	}
-	return runPullWorkspace(ws, startDir, rebase, cmd, args)
+	return runPullWorkspace(ws, startDir, flags, rebase, cmd, args)
 }
 
-func runPullWorkspace(ws workspace.Workspace, startDir string, rebase bool, cmd *cobra.Command, args []string) error {
-	selectors, err := resolveWorkspaceRepoSelectors(ws, startDir, args)
+func runPullWorkspace(ws workspace.Workspace, startDir string, flags workspaceTargetFlags, rebase bool, cmd *cobra.Command, args []string) error {
+	repoSelectors, err := resolveWorkspaceRepoSelectors(ws, startDir, args)
 	if err != nil {
 		return err
 	}
@@ -75,16 +79,29 @@ func runPullWorkspace(ws workspace.Workspace, startDir string, rebase bool, cmd 
 		g = append(g, "--rebase")
 	}
 
-	pulled := 0
-	var targets []workspace.Target
-	if len(ws.Manifest.Repos) > 0 {
-		targets, err = ws.ResolveTargets(workspace.TargetOptions{RepoSelectors: selectors})
-		if err != nil {
-			return err
-		}
+	targets, err := ws.ResolveTargets(flags.targetOptions(true, repoSelectors))
+	if err != nil {
+		return err
 	}
 
+	pulled := 0
+	var failures commandFailures
 	for _, target := range targets {
+		if target.IsRoot {
+			if !hasUpstream(ws.RootDir) {
+				continue
+			}
+			fmt.Fprintln(cmd.ErrOrStderr(), "pulling umbrella repository...")
+			if err := git.RunInteractive(ws.RootDir, g...); err != nil {
+				if handledErr := failures.handle(flags.continueOnError, "pulling umbrella repository: %w", err); handledErr != nil {
+					return handledErr
+				}
+				continue
+			}
+			pulled++
+			continue
+		}
+
 		repo, ok := workspaceRepoByPath(ws, target.Path)
 		if !ok {
 			return fmt.Errorf("tracked repository '%s' not found in manifest", target.Path)
@@ -102,15 +119,10 @@ func runPullWorkspace(ws workspace.Workspace, startDir string, rebase bool, cmd 
 
 		fmt.Fprintf(cmd.ErrOrStderr(), "pulling '%s'...\n", target.Path)
 		if err := git.RunInteractive(target.Dir, g...); err != nil {
-			return fmt.Errorf("pulling '%s': %w", target.Path, err)
-		}
-		pulled++
-	}
-
-	if hasUpstream(ws.RootDir) {
-		fmt.Fprintln(cmd.ErrOrStderr(), "pulling umbrella repository...")
-		if err := git.RunInteractive(ws.RootDir, g...); err != nil {
-			return fmt.Errorf("pulling umbrella repository: %w", err)
+			if handledErr := failures.handle(flags.continueOnError, "pulling '%s': %w", target.Path, err); handledErr != nil {
+				return handledErr
+			}
+			continue
 		}
 		pulled++
 	}
@@ -119,7 +131,7 @@ func runPullWorkspace(ws workspace.Workspace, startDir string, rebase bool, cmd 
 		fmt.Fprintln(cmd.ErrOrStderr(), "nothing to pull")
 	}
 
-	return nil
+	return failures.err("pull failed")
 }
 
 func resolveWorkspaceRepoSelectors(ws workspace.Workspace, startDir string, args []string) ([]string, error) {

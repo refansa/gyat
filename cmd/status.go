@@ -23,14 +23,21 @@ changes, unstaged changes, and untracked files are listed under clearly
 labelled headings. Repositories listed in .gyat but missing on disk are flagged
 with "not cloned".
 
-Without arguments every tracked repo is shown alongside the umbrella
-repository. Pass one or more repo names or paths to limit the output to those
-repos (the umbrella is always shown).`,
+Without selector flags, status shows the umbrella repository followed by every
+tracked repo. Use positional repo names or paths, '--repo', and '--group' to
+narrow the repo set, '--no-root' to exclude the umbrella repository, or
+'--root-only' to inspect only the umbrella root.`,
 	Example: `  # Show status for all repositories
   gyat status
 
-  # Show status for specific repos (plus the umbrella)
-  gyat status services/auth services/billing
+	# Show status for specific repos while keeping the umbrella
+	gyat status services/auth services/billing
+
+	# Show status for one repo without the umbrella
+	gyat status --repo auth --no-root
+
+	# Show only the umbrella repository
+	gyat status --root-only
 
   # Show status for a repo selected by name
   gyat status auth`,
@@ -39,7 +46,7 @@ repos (the umbrella is always shown).`,
 		if err != nil {
 			return fmt.Errorf("get current directory: %w", err)
 		}
-		return runStatus(dir, cmd, args)
+		return runStatusWithFlags(dir, sharedTargetFlags, cmd, args)
 	},
 }
 
@@ -195,57 +202,57 @@ func printUnavailableRepo(out io.Writer, path, status string) {
 }
 
 func runStatus(dir string, cmd *cobra.Command, args []string) error {
+	return runStatusWithFlags(dir, workspaceTargetFlags{}, cmd, args)
+}
+
+func runStatusWithFlags(dir string, flags workspaceTargetFlags, cmd *cobra.Command, args []string) error {
 	ws, err := workspace.Load(dir)
 	if err != nil {
 		return err
 	}
-	return runStatusWorkspace(ws, cmd, args)
+	return runStatusWorkspace(ws, flags, cmd, args)
 }
 
-// runStatusWorkspace prints a status report for the umbrella repository and the
-// tracked repos listed in .gyat. When args is non-empty they are treated as
-// repo selectors (name or path), while the umbrella repository is always shown.
-func runStatusWorkspace(ws workspace.Workspace, cmd *cobra.Command, args []string) error {
+// runStatusWorkspace prints a status report for the selected workspace targets.
+// Positional args are treated as repo selectors (name or path) and are
+// combined with the shared target flags.
+func runStatusWorkspace(ws workspace.Workspace, flags workspaceTargetFlags, cmd *cobra.Command, args []string) error {
 	stdout := cmd.OutOrStdout()
 	errout := cmd.ErrOrStderr()
+	var failures commandFailures
 
-	// Always show the umbrella repository first.
-	umbrellaStatus, err := collectRepoStatus(ws.RootDir)
-	if err != nil {
-		return fmt.Errorf("umbrella repository: %w", err)
-	}
-	printRepoSection(stdout, "umbrella repository", umbrellaStatus)
-
-	if len(ws.Manifest.Repos) == 0 {
-		fmt.Fprintln(errout, "hint: use 'gyat track <repo>' to add a repository")
-		return nil
-	}
-
-	targets, err := ws.ResolveTargets(workspace.TargetOptions{
-		IncludeRoot:   true,
-		RepoSelectors: args,
-	})
+	targets, err := ws.ResolveTargets(flags.targetOptions(true, args))
 	if err != nil {
 		return err
 	}
 
 	for _, target := range targets {
-		if target.IsRoot {
-			continue
-		}
-
-		if _, statErr := os.Stat(target.Dir); os.IsNotExist(statErr) {
-			printUnavailableRepo(stdout, target.Path, "not cloned")
-			continue
+		if !target.IsRoot {
+			if _, statErr := os.Stat(target.Dir); os.IsNotExist(statErr) {
+				printUnavailableRepo(stdout, target.Path, "not cloned")
+				continue
+			}
 		}
 
 		rs, err := collectRepoStatus(target.Dir)
 		if err != nil {
-			fmt.Fprintf(errout, "warning: could not get status of '%s': %v\n", target.Path, err)
+			if handledErr := failures.handle(flags.continueOnError, "could not get status of '%s': %w", target.Label, err); handledErr != nil {
+				return handledErr
+			}
+			fmt.Fprintf(errout, "warning: could not get status of '%s': %v\n", target.Label, err)
+			continue
+		}
+
+		if target.IsRoot {
+			printRepoSection(stdout, "umbrella repository", rs)
 			continue
 		}
 		printRepoSection(stdout, target.Path, rs)
 	}
 
-	return nil
+	if len(ws.Manifest.Repos) == 0 && !flags.rootOnly && !flags.noRoot {
+		fmt.Fprintln(errout, "hint: use 'gyat track <repo>' to add a repository")
+	}
+
+	return failures.err("status failed")
 }

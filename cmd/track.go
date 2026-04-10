@@ -48,6 +48,9 @@ Use --branch to clone a specific branch and record it in the manifest.`,
   gyat track /home/user/projects/service-auth services/auth`,
 	Args: cobra.RangeArgs(1, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := sharedTargetFlags.validateUnsupported("track"); err != nil {
+			return err
+		}
 		dir, err := os.Getwd()
 		if err != nil {
 			return fmt.Errorf("get current directory: %w", err)

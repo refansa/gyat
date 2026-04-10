@@ -16,9 +16,11 @@ import (
 var Version = "dev"
 
 var rootCmd = &cobra.Command{
-	Use:     "gyat",
-	Short:   "Git Your Ass Together — an umbrella workspace manager",
-	Version: Version,
+	Use:           "gyat",
+	Short:         "Git Your Ass Together — an umbrella workspace manager",
+	Version:       Version,
+	SilenceUsage:  true,
+	SilenceErrors: true,
 	Long: `gyat is an umbrella workspace manager for multi-repository projects.
 
 It helps you organize related repositories under one root workspace so they can
@@ -38,5 +40,6 @@ func init() {
 		}
 	}
 	rootCmd.Version = Version
+	bindWorkspaceTargetFlags(rootCmd)
 	registerBuiltins(rootCmd)
 }

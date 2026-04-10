@@ -31,38 +31,58 @@ tracking branch.`,
 		if err != nil {
 			return err
 		}
-		return runUpdateFrom(startDir, dir, cmd, args)
+		return runUpdateWithFlagsFrom(startDir, dir, sharedTargetFlags, cmd, args)
 	},
 }
 
 func runUpdate(dir string, cmd *cobra.Command, args []string) error {
-	return runUpdateFrom(dir, dir, cmd, args)
+	return runUpdateWithFlagsFrom(dir, dir, workspaceTargetFlags{}, cmd, args)
 }
 
 func runUpdateFrom(startDir, dir string, cmd *cobra.Command, args []string) error {
+	return runUpdateWithFlagsFrom(startDir, dir, workspaceTargetFlags{}, cmd, args)
+}
+
+func runUpdateWithFlagsFrom(startDir, dir string, flags workspaceTargetFlags, cmd *cobra.Command, args []string) error {
 	_ = dir
 	ws, err := workspace.Load(startDir)
 	if err != nil {
 		return err
 	}
 
-	selectors, err := resolveWorkspaceRepoSelectors(ws, startDir, args)
+	repoSelectors, err := resolveWorkspaceRepoSelectors(ws, startDir, args)
 	if err != nil {
 		return err
 	}
 
-	if len(ws.Manifest.Repos) == 0 {
+	if len(ws.Manifest.Repos) == 0 && !flags.rootOnly {
 		fmt.Fprintln(cmd.ErrOrStderr(), "nothing to update")
 		return nil
 	}
 
-	targets, err := ws.ResolveTargets(workspace.TargetOptions{RepoSelectors: selectors})
+	targets, err := ws.ResolveTargets(flags.targetOptions(flags.rootOnly, repoSelectors))
 	if err != nil {
 		return err
 	}
 
 	updated := 0
+	var failures commandFailures
 	for _, target := range targets {
+		if target.IsRoot {
+			if !hasUpstream(ws.RootDir) {
+				continue
+			}
+			fmt.Fprintln(cmd.ErrOrStderr(), "updating umbrella repository...")
+			if err := git.RunInteractive(ws.RootDir, "pull", "--ff-only"); err != nil {
+				if handledErr := failures.handle(flags.continueOnError, "updating umbrella repository: %w", err); handledErr != nil {
+					return handledErr
+				}
+				continue
+			}
+			updated++
+			continue
+		}
+
 		repo, ok := workspaceRepoByPath(ws, target.Path)
 		if !ok {
 			return fmt.Errorf("tracked repository '%s' not found in manifest", target.Path)
@@ -83,7 +103,10 @@ func runUpdateFrom(startDir, dir string, cmd *cobra.Command, args []string) erro
 
 		fmt.Fprintf(cmd.ErrOrStderr(), "updating '%s'...\n", repo.Path)
 		if err := git.RunInteractive(repoDir, gitArgs...); err != nil {
-			return fmt.Errorf("updating '%s': %w", repo.Path, err)
+			if handledErr := failures.handle(flags.continueOnError, "updating '%s': %w", repo.Path, err); handledErr != nil {
+				return handledErr
+			}
+			continue
 		}
 		updated++
 	}
@@ -92,5 +115,5 @@ func runUpdateFrom(startDir, dir string, cmd *cobra.Command, args []string) erro
 		fmt.Fprintln(cmd.ErrOrStderr(), "nothing to update")
 	}
 
-	return nil
+	return failures.err("update failed")
 }

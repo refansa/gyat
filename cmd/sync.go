@@ -31,47 +31,54 @@ renamed) and you need local clones to point to the new location.
 		if err != nil {
 			return err
 		}
-		return runSyncFrom(startDir, dir, cmd, args)
+		return runSyncWithFlagsFrom(startDir, dir, sharedTargetFlags, cmd, args)
 	},
 }
 
 func runSync(dir string, cmd *cobra.Command, args []string) error {
-	return runSyncFrom(dir, dir, cmd, args)
+	return runSyncWithFlagsFrom(dir, dir, workspaceTargetFlags{}, cmd, args)
 }
 
 func runSyncFrom(startDir, dir string, cmd *cobra.Command, args []string) error {
+	return runSyncWithFlagsFrom(startDir, dir, workspaceTargetFlags{}, cmd, args)
+}
+
+func runSyncWithFlagsFrom(startDir, dir string, flags workspaceTargetFlags, cmd *cobra.Command, args []string) error {
 	_ = dir
 	ws, err := workspace.Load(startDir)
 	if err != nil {
 		return err
 	}
 
-	selectors, err := resolveWorkspaceRepoSelectors(ws, startDir, args)
+	repoSelectors, err := resolveWorkspaceRepoSelectors(ws, startDir, args)
+	if err != nil {
+		return err
+	}
+
+	targets, err := ws.ResolveTargets(flags.targetOptions(true, repoSelectors))
 	if err != nil {
 		return err
 	}
 
 	changed := 0
-	if updated, err := workspace.SyncGitIgnore(ws.RootDir, ws.Manifest); err != nil {
-		return err
-	} else if updated {
-		fmt.Fprintln(cmd.ErrOrStderr(), "updated .gitignore managed block")
-		changed++
-	}
-
-	if len(ws.Manifest.Repos) == 0 {
-		if changed == 0 {
-			fmt.Fprintln(cmd.ErrOrStderr(), "nothing to sync")
-		}
-		return nil
-	}
-
-	targets, err := ws.ResolveTargets(workspace.TargetOptions{RepoSelectors: selectors})
-	if err != nil {
-		return err
-	}
+	var failures commandFailures
 
 	for _, target := range targets {
+		if target.IsRoot {
+			updated, err := workspace.SyncGitIgnore(ws.RootDir, ws.Manifest)
+			if err != nil {
+				if handledErr := failures.handle(flags.continueOnError, "syncing workspace .gitignore: %w", err); handledErr != nil {
+					return handledErr
+				}
+				continue
+			}
+			if updated {
+				fmt.Fprintln(cmd.ErrOrStderr(), "updated .gitignore managed block")
+				changed++
+			}
+			continue
+		}
+
 		repo, ok := workspaceRepoByPath(ws, target.Path)
 		if !ok {
 			return fmt.Errorf("tracked repository '%s' not found in manifest", target.Path)
@@ -79,7 +86,10 @@ func runSyncFrom(startDir, dir string, cmd *cobra.Command, args []string) error 
 
 		desiredURL, err := resolveManifestRepoURL(ws.RootDir, repo.URL)
 		if err != nil {
-			return fmt.Errorf("resolving URL for '%s': %w", repo.Path, err)
+			if handledErr := failures.handle(flags.continueOnError, "resolving URL for '%s': %w", repo.Path, err); handledErr != nil {
+				return handledErr
+			}
+			continue
 		}
 
 		if _, err := os.Stat(target.Dir); os.IsNotExist(err) {
@@ -90,7 +100,10 @@ func runSyncFrom(startDir, dir string, cmd *cobra.Command, args []string) error 
 			}
 			cloneArgs = append(cloneArgs, desiredURL, target.Dir)
 			if _, err := git.Run(ws.RootDir, cloneArgs...); err != nil {
-				return fmt.Errorf("cloning '%s': %w", repo.Path, err)
+				if handledErr := failures.handle(flags.continueOnError, "cloning '%s': %w", repo.Path, err); handledErr != nil {
+					return handledErr
+				}
+				continue
 			}
 			changed++
 			continue
@@ -104,13 +117,19 @@ func runSyncFrom(startDir, dir string, cmd *cobra.Command, args []string) error 
 		case err != nil || currentURL == "":
 			fmt.Fprintf(cmd.ErrOrStderr(), "configuring origin for '%s'...\n", repo.Path)
 			if _, err := git.Run(target.Dir, "remote", "add", "origin", desiredURL); err != nil {
-				return fmt.Errorf("configuring origin for '%s': %w", repo.Path, err)
+				if handledErr := failures.handle(flags.continueOnError, "configuring origin for '%s': %w", repo.Path, err); handledErr != nil {
+					return handledErr
+				}
+				continue
 			}
 			changed++
 		case currentURL != desiredURL:
 			fmt.Fprintf(cmd.ErrOrStderr(), "syncing remote for '%s'...\n", repo.Path)
 			if _, err := git.Run(target.Dir, "remote", "set-url", "origin", desiredURL); err != nil {
-				return fmt.Errorf("syncing remote for '%s': %w", repo.Path, err)
+				if handledErr := failures.handle(flags.continueOnError, "syncing remote for '%s': %w", repo.Path, err); handledErr != nil {
+					return handledErr
+				}
+				continue
 			}
 			changed++
 		}
@@ -120,7 +139,7 @@ func runSyncFrom(startDir, dir string, cmd *cobra.Command, args []string) error 
 		fmt.Fprintln(cmd.ErrOrStderr(), "nothing to sync")
 	}
 
-	return nil
+	return failures.err("sync failed")
 }
 
 func resolveManifestRepoURL(root, repoURL string) (string, error) {

@@ -11,14 +11,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var (
-	execRepoSelectors   []string
-	execGroups          []string
-	execNoRoot          bool
-	execRootOnly        bool
-	execContinueOnError bool
-)
-
 var execCmd = &cobra.Command{
 	Use:   "exec [flags] -- <command> [args...]",
 	Short: "Run a command across the umbrella workspace and managed repos",
@@ -30,7 +22,7 @@ managed repo listed in .gyat. Use --repo and --group to narrow the repo set,
 the umbrella repository.
 
 When command arguments contain flags of their own, place "--" before the
-command so gyat stop parsing exec flags.`,
+command so gyat stops parsing exec flags.`,
 	Example: `  # Run in the umbrella root and every managed repo
   gyat exec -- git status --short
 
@@ -45,7 +37,7 @@ command so gyat stop parsing exec flags.`,
 		if err != nil {
 			return fmt.Errorf("get current directory: %w", err)
 		}
-		return runExec(dir, execRepoSelectors, execGroups, execNoRoot, execRootOnly, execContinueOnError, cmd, args)
+		return runExec(dir, sharedTargetFlags.repoSelectors, sharedTargetFlags.groups, sharedTargetFlags.noRoot, sharedTargetFlags.rootOnly, sharedTargetFlags.continueOnError, cmd, args)
 	},
 }
 
@@ -94,12 +86,4 @@ func printExecResults(out io.Writer, results []workspace.RunResult) {
 			fmt.Fprintln(out)
 		}
 	}
-}
-
-func init() {
-	execCmd.Flags().StringSliceVar(&execRepoSelectors, "repo", nil, "Run only in the specified repo name or path (repeatable)")
-	execCmd.Flags().StringSliceVar(&execGroups, "group", nil, "Run only in repos belonging to the specified group (repeatable)")
-	execCmd.Flags().BoolVar(&execNoRoot, "no-root", false, "Exclude the umbrella repository from execution")
-	execCmd.Flags().BoolVar(&execRootOnly, "root-only", false, "Run only in the umbrella repository")
-	execCmd.Flags().BoolVar(&execContinueOnError, "continue-on-error", false, "Continue running in remaining targets after a failure")
 }

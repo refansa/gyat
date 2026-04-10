@@ -47,7 +47,7 @@ removed from the umbrella repository itself.`,
 		if err != nil {
 			return err
 		}
-		return runRmFrom(startDir, dir, rmCached, rmForce, rmRecursive, cmd, args)
+		return runRmWithFlagsFrom(startDir, dir, sharedTargetFlags, rmCached, rmForce, rmRecursive, cmd, args)
 	},
 }
 
@@ -71,25 +71,38 @@ func buildRmArgs(cached, force, recursive bool, files []string) []string {
 // runRm removes files from the working tree and index. It routes each path to
 // the repository it belongs to.
 func runRm(dir string, cached, force, recursive bool, cmd *cobra.Command, args []string) error {
-	return runRmFrom(dir, dir, cached, force, recursive, cmd, args)
+	return runRmWithFlagsFrom(dir, dir, workspaceTargetFlags{}, cached, force, recursive, cmd, args)
 }
 
 func runRmFrom(startDir, dir string, cached, force, recursive bool, cmd *cobra.Command, args []string) error {
+	return runRmWithFlagsFrom(startDir, dir, workspaceTargetFlags{}, cached, force, recursive, cmd, args)
+}
+
+func runRmWithFlagsFrom(startDir, dir string, flags workspaceTargetFlags, cached, force, recursive bool, cmd *cobra.Command, args []string) error {
 	_ = dir
 	ws, err := workspace.Load(startDir)
 	if err != nil {
 		return err
 	}
+	if flags.hasSelection() {
+		return removeSelectedWorkspaceTargets(ws, flags, cached, force, recursive, cmd, args)
+	}
+	return runRmWorkspace(ws, startDir, flags, cached, force, recursive, cmd, args)
+}
 
+func runRmWorkspace(ws workspace.Workspace, startDir string, flags workspaceTargetFlags, cached, force, recursive bool, cmd *cobra.Command, args []string) error {
 	rootArgs, repoTargets, err := classifyWorkspaceArgs(ws.RootDir, ws.Manifest.Repos, startDir, args)
 	if err != nil {
 		return err
 	}
+	var failures commandFailures
 
 	if len(rootArgs) > 0 {
 		gitArgs := buildRmArgs(cached, force, recursive, rootArgs)
 		if _, err := git.Run(ws.RootDir, gitArgs...); err != nil {
-			return fmt.Errorf("removing root paths: %w", err)
+			if handledErr := failures.handle(flags.continueOnError, "removing root paths: %w", err); handledErr != nil {
+				return handledErr
+			}
 		}
 	}
 
@@ -122,11 +135,48 @@ func runRmFrom(startDir, dir string, cached, force, recursive bool, cmd *cobra.C
 
 		gitArgs := buildRmArgs(cached, force, recursive, stage.files)
 		if _, err := git.Run(repoDir, gitArgs...); err != nil {
-			return fmt.Errorf("removing in '%s': %w", repoPath, err)
+			if handledErr := failures.handle(flags.continueOnError, "removing in '%s': %w", repoPath, err); handledErr != nil {
+				return handledErr
+			}
 		}
 	}
 
-	return nil
+	return failures.err("rm failed")
+}
+
+func removeSelectedWorkspaceTargets(ws workspace.Workspace, flags workspaceTargetFlags, cached, force, recursive bool, cmd *cobra.Command, args []string) error {
+	targets, err := ws.ResolveTargets(flags.targetOptions(true, nil))
+	if err != nil {
+		return err
+	}
+	var failures commandFailures
+	for _, target := range targets {
+		if !target.IsRoot {
+			if _, err := os.Stat(target.Dir); os.IsNotExist(err) {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: tracked repository '%s' is not cloned, skipping\n", target.Path)
+				continue
+			} else if err != nil {
+				if handledErr := failures.handle(flags.continueOnError, "checking target '%s': %w", target.Label, err); handledErr != nil {
+					return handledErr
+				}
+				continue
+			}
+		}
+
+		label := target.Label
+		if target.IsRoot {
+			label = "umbrella repository"
+		}
+		fmt.Fprintf(cmd.ErrOrStderr(), "removing in '%s'...\n", label)
+		gitArgs := buildRmArgs(cached, force, recursive, args)
+		if _, err := git.Run(target.Dir, gitArgs...); err != nil {
+			if handledErr := failures.handle(flags.continueOnError, "removing in '%s': %w", label, err); handledErr != nil {
+				return handledErr
+			}
+		}
+	}
+
+	return failures.err("rm failed")
 }
 
 func init() {

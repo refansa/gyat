@@ -40,27 +40,31 @@ then the umbrella repository.`,
 		if err != nil {
 			return err
 		}
-		return runPushFrom(startDir, dir, pushForce, cmd, args)
+		return runPushWithFlagsFrom(startDir, dir, sharedTargetFlags, pushForce, cmd, args)
 	},
 }
 
 // runPush pushes local commits for the selected tracked repos and, if a
 // remote is configured, the umbrella repository itself.
 func runPush(dir string, force bool, cmd *cobra.Command, args []string) error {
-	return runPushFrom(dir, dir, force, cmd, args)
+	return runPushWithFlagsFrom(dir, dir, workspaceTargetFlags{}, force, cmd, args)
 }
 
 func runPushFrom(startDir, dir string, force bool, cmd *cobra.Command, args []string) error {
+	return runPushWithFlagsFrom(startDir, dir, workspaceTargetFlags{}, force, cmd, args)
+}
+
+func runPushWithFlagsFrom(startDir, dir string, flags workspaceTargetFlags, force bool, cmd *cobra.Command, args []string) error {
 	_ = dir
 	ws, err := workspace.Load(startDir)
 	if err != nil {
 		return err
 	}
-	return runPushWorkspace(ws, startDir, force, cmd, args)
+	return runPushWorkspace(ws, startDir, flags, force, cmd, args)
 }
 
-func runPushWorkspace(ws workspace.Workspace, startDir string, force bool, cmd *cobra.Command, args []string) error {
-	selectors, err := resolveWorkspaceRepoSelectors(ws, startDir, args)
+func runPushWorkspace(ws workspace.Workspace, startDir string, flags workspaceTargetFlags, force bool, cmd *cobra.Command, args []string) error {
+	repoSelectors, err := resolveWorkspaceRepoSelectors(ws, startDir, args)
 	if err != nil {
 		return err
 	}
@@ -70,16 +74,29 @@ func runPushWorkspace(ws workspace.Workspace, startDir string, force bool, cmd *
 		g = append(g, "--force")
 	}
 
-	pushed := 0
-	var targets []workspace.Target
-	if len(ws.Manifest.Repos) > 0 {
-		targets, err = ws.ResolveTargets(workspace.TargetOptions{RepoSelectors: selectors})
-		if err != nil {
-			return err
-		}
+	targets, err := ws.ResolveTargets(flags.targetOptions(true, repoSelectors))
+	if err != nil {
+		return err
 	}
 
+	pushed := 0
+	var failures commandFailures
 	for _, target := range targets {
+		if target.IsRoot {
+			if !hasRemote(ws.RootDir) {
+				continue
+			}
+			fmt.Fprintln(cmd.ErrOrStderr(), "pushing umbrella repository...")
+			if err := git.RunInteractive(ws.RootDir, g...); err != nil {
+				if handledErr := failures.handle(flags.continueOnError, "pushing umbrella repository: %w", err); handledErr != nil {
+					return handledErr
+				}
+				continue
+			}
+			pushed++
+			continue
+		}
+
 		repo, ok := workspaceRepoByPath(ws, target.Path)
 		if !ok {
 			return fmt.Errorf("tracked repository '%s' not found in manifest", target.Path)
@@ -97,15 +114,10 @@ func runPushWorkspace(ws workspace.Workspace, startDir string, force bool, cmd *
 
 		fmt.Fprintf(cmd.ErrOrStderr(), "pushing '%s'...\n", target.Path)
 		if err := git.RunInteractive(target.Dir, g...); err != nil {
-			return fmt.Errorf("pushing '%s': %w", target.Path, err)
-		}
-		pushed++
-	}
-
-	if hasRemote(ws.RootDir) {
-		fmt.Fprintln(cmd.ErrOrStderr(), "pushing umbrella repository...")
-		if err := git.RunInteractive(ws.RootDir, g...); err != nil {
-			return fmt.Errorf("pushing umbrella repository: %w", err)
+			if handledErr := failures.handle(flags.continueOnError, "pushing '%s': %w", target.Path, err); handledErr != nil {
+				return handledErr
+			}
+			continue
 		}
 		pushed++
 	}
@@ -114,7 +126,7 @@ func runPushWorkspace(ws workspace.Workspace, startDir string, force bool, cmd *
 		fmt.Fprintln(cmd.ErrOrStderr(), "nothing to push")
 	}
 
-	return nil
+	return failures.err("push failed")
 }
 
 // hasRemote reports whether the git repository in dir has at least one remote

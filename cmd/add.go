@@ -55,7 +55,7 @@ belongs to:
 		if err != nil {
 			return err
 		}
-		return runAddFrom(startDir, dir, cmd, args)
+		return runAddWithFlagsFrom(startDir, dir, sharedTargetFlags, cmd, args)
 	},
 }
 
@@ -71,38 +71,50 @@ type repoStage struct {
 // With no args it stages everything in the workspace. With args it routes each
 // path to the repository it belongs to.
 func runAdd(dir string, cmd *cobra.Command, args []string) error {
-	return runAddFrom(dir, dir, cmd, args)
+	return runAddWithFlagsFrom(dir, dir, workspaceTargetFlags{}, cmd, args)
 }
 
 func runAddFrom(startDir, dir string, cmd *cobra.Command, args []string) error {
+	return runAddWithFlagsFrom(startDir, dir, workspaceTargetFlags{}, cmd, args)
+}
+
+func runAddWithFlagsFrom(startDir, dir string, flags workspaceTargetFlags, cmd *cobra.Command, args []string) error {
 	_ = dir
 	ws, err := workspace.Load(startDir)
 	if err != nil {
 		return err
 	}
-	return runAddWorkspace(ws, startDir, cmd, args)
+	return runAddWorkspace(ws, startDir, flags, cmd, args)
 }
 
-func runAddWorkspace(ws workspace.Workspace, startDir string, cmd *cobra.Command, args []string) error {
-	if len(args) == 0 {
-		return stageAllWorkspace(ws, cmd)
+func runAddWorkspace(ws workspace.Workspace, startDir string, flags workspaceTargetFlags, cmd *cobra.Command, args []string) error {
+	if flags.hasSelection() {
+		return stageSelectedWorkspace(ws, flags, cmd, args)
 	}
-	return stageTargetedWorkspace(ws, startDir, args, cmd)
+	if len(args) == 0 {
+		return stageAllWorkspace(ws, flags.continueOnError, cmd)
+	}
+	return stageTargetedWorkspace(ws, startDir, args, flags.continueOnError, cmd)
 }
 
-func stageAllWorkspace(ws workspace.Workspace, cmd *cobra.Command) error {
+func stageAllWorkspace(ws workspace.Workspace, continueOnError bool, cmd *cobra.Command) error {
 	staged := 0
+	var failures commandFailures
 
 	statusOut, err := git.Run(ws.RootDir, "status", "--porcelain")
 	if err != nil {
-		return fmt.Errorf("checking umbrella status: %w", err)
-	}
-	if hasWorkingTreeChanges(statusOut) {
+		if handledErr := failures.handle(continueOnError, "checking umbrella status: %w", err); handledErr != nil {
+			return handledErr
+		}
+	} else if hasWorkingTreeChanges(statusOut) {
 		fmt.Fprintln(cmd.ErrOrStderr(), "staging umbrella repository...")
 		if _, err := git.Run(ws.RootDir, "add", "-A"); err != nil {
-			return fmt.Errorf("staging umbrella root: %w", err)
+			if handledErr := failures.handle(continueOnError, "staging umbrella root: %w", err); handledErr != nil {
+				return handledErr
+			}
+		} else {
+			staged++
 		}
-		staged++
 	}
 
 	for _, repo := range ws.Manifest.Repos {
@@ -116,7 +128,10 @@ func stageAllWorkspace(ws workspace.Workspace, cmd *cobra.Command) error {
 
 		statusOut, err := git.Run(repoDir, "status", "--porcelain")
 		if err != nil {
-			return fmt.Errorf("checking status of '%s': %w", repo.Path, err)
+			if handledErr := failures.handle(continueOnError, "checking status of '%s': %w", repo.Path, err); handledErr != nil {
+				return handledErr
+			}
+			continue
 		}
 		if !hasWorkingTreeChanges(statusOut) {
 			continue
@@ -124,7 +139,10 @@ func stageAllWorkspace(ws workspace.Workspace, cmd *cobra.Command) error {
 
 		fmt.Fprintf(cmd.ErrOrStderr(), "staging '%s'...\n", repo.Path)
 		if _, err := git.Run(repoDir, "add", "-A"); err != nil {
-			return fmt.Errorf("staging '%s': %w", repo.Path, err)
+			if handledErr := failures.handle(continueOnError, "staging '%s': %w", repo.Path, err); handledErr != nil {
+				return handledErr
+			}
+			continue
 		}
 		staged++
 	}
@@ -133,19 +151,82 @@ func stageAllWorkspace(ws workspace.Workspace, cmd *cobra.Command) error {
 		fmt.Fprintln(cmd.ErrOrStderr(), "nothing to stage")
 	}
 
-	return nil
+	return failures.err("staging failed")
 }
 
-func stageTargetedWorkspace(ws workspace.Workspace, startDir string, args []string, cmd *cobra.Command) error {
-	rootArgs, repoTargets, err := classifyWorkspaceArgs(ws.RootDir, ws.Manifest.Repos, startDir, args)
+func stageSelectedWorkspace(ws workspace.Workspace, flags workspaceTargetFlags, cmd *cobra.Command, args []string) error {
+	targets, err := ws.ResolveTargets(flags.targetOptions(true, nil))
 	if err != nil {
 		return err
 	}
 
+	staged := 0
+	var failures commandFailures
+	for _, target := range targets {
+		if !target.IsRoot {
+			if _, err := os.Stat(target.Dir); os.IsNotExist(err) {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: tracked repository '%s' is not cloned, skipping\n", target.Path)
+				continue
+			} else if err != nil {
+				if handledErr := failures.handle(flags.continueOnError, "checking target '%s': %w", target.Label, err); handledErr != nil {
+					return handledErr
+				}
+				continue
+			}
+		}
+
+		label := target.Label
+		if target.IsRoot {
+			label = "umbrella repository"
+		}
+
+		gitArgs := []string{"add", "-A"}
+		if len(args) > 0 {
+			gitArgs = append([]string{"add", "--"}, args...)
+		}
+		if len(args) == 0 {
+			statusOut, err := git.Run(target.Dir, "status", "--porcelain")
+			if err != nil {
+				if handledErr := failures.handle(flags.continueOnError, "checking status of '%s': %w", label, err); handledErr != nil {
+					return handledErr
+				}
+				continue
+			}
+			if !hasWorkingTreeChanges(statusOut) {
+				continue
+			}
+		}
+
+		fmt.Fprintf(cmd.ErrOrStderr(), "staging '%s'...\n", label)
+		if _, err := git.Run(target.Dir, gitArgs...); err != nil {
+			if handledErr := failures.handle(flags.continueOnError, "staging '%s': %w", label, err); handledErr != nil {
+				return handledErr
+			}
+			continue
+		}
+		staged++
+	}
+
+	if staged == 0 {
+		fmt.Fprintln(cmd.ErrOrStderr(), "nothing to stage")
+	}
+
+	return failures.err("staging failed")
+}
+
+func stageTargetedWorkspace(ws workspace.Workspace, startDir string, args []string, continueOnError bool, cmd *cobra.Command) error {
+	rootArgs, repoTargets, err := classifyWorkspaceArgs(ws.RootDir, ws.Manifest.Repos, startDir, args)
+	if err != nil {
+		return err
+	}
+	var failures commandFailures
+
 	if len(rootArgs) > 0 {
 		gitArgs := append([]string{"add", "--"}, rootArgs...)
 		if _, err := git.Run(ws.RootDir, gitArgs...); err != nil {
-			return fmt.Errorf("staging root paths: %w", err)
+			if handledErr := failures.handle(continueOnError, "staging root paths: %w", err); handledErr != nil {
+				return handledErr
+			}
 		}
 	}
 
@@ -173,11 +254,13 @@ func stageTargetedWorkspace(ws workspace.Workspace, startDir string, args []stri
 		}
 
 		if _, err := git.Run(repoDir, gitArgs...); err != nil {
-			return fmt.Errorf("staging '%s': %w", repo.Path, err)
+			if handledErr := failures.handle(continueOnError, "staging '%s': %w", repo.Path, err); handledErr != nil {
+				return handledErr
+			}
 		}
 	}
 
-	return nil
+	return failures.err("staging failed")
 }
 
 func classifyWorkspaceArgs(root string, repos []manifest.Repo, startDir string, args []string) (rootArgs []string, repoTargets map[string]*repoStage, err error) {

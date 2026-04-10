@@ -31,35 +31,85 @@ var listCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("get current directory: %w", err)
 		}
-		return runList(dir, cmd, args)
+		return runListWithFlags(dir, sharedTargetFlags, cmd, args)
 	},
 }
 
 func runList(dir string, cmd *cobra.Command, args []string) error {
+	return runListWithFlags(dir, workspaceTargetFlags{}, cmd, args)
+}
+
+func runListWithFlags(dir string, flags workspaceTargetFlags, cmd *cobra.Command, args []string) error {
 	ws, err := workspace.Load(dir)
 	if err != nil {
 		return err
 	}
-	return runListWorkspace(ws, cmd)
+	return runListWorkspace(ws, flags, cmd)
 }
 
-func runListWorkspace(ws workspace.Workspace, cmd *cobra.Command) error {
+func runListWorkspace(ws workspace.Workspace, flags workspaceTargetFlags, cmd *cobra.Command) error {
 	stdout := cmd.OutOrStdout()
 	errout := cmd.ErrOrStderr()
 
-	if len(ws.Manifest.Repos) == 0 {
+	if len(ws.Manifest.Repos) == 0 && !flags.rootOnly {
 		fmt.Fprintln(stdout, "no managed repos found")
 		fmt.Fprintln(errout, "hint: use 'gyat track <repo>' to add a repository")
 		return nil
 	}
 
-	repos := make([]repoInfo, 0, len(ws.Manifest.Repos))
-	for _, repo := range ws.Manifest.Repos {
+	targets, err := ws.ResolveTargets(flags.targetOptions(flags.rootOnly, nil))
+	if err != nil {
+		return err
+	}
+
+	repos := make([]repoInfo, 0, len(targets))
+	for _, target := range targets {
+		if target.IsRoot {
+			repos = append(repos, collectRootInfo(ws.RootDir))
+			continue
+		}
+
+		repo, ok := workspaceRepoByPath(ws, target.Path)
+		if !ok {
+			return fmt.Errorf("tracked repository '%s' not found in manifest", target.Path)
+		}
 		repos = append(repos, collectRepoInfo(ws.RootDir, repo))
 	}
 
 	printRepoTable(stdout, repos)
 	return nil
+}
+
+func collectRootInfo(root string) repoInfo {
+	info := repoInfo{
+		name: ".",
+		path: ".",
+		url:  "-",
+	}
+
+	rs, err := collectRepoStatus(root)
+	if err != nil {
+		info.branch = "(invalid)"
+		info.sha = "?"
+		info.status = "invalid"
+		return info
+	}
+	info.branch = rs.branch
+
+	sha, err := git.Run(root, "rev-parse", "--short", "HEAD")
+	if err != nil || strings.TrimSpace(sha) == "" {
+		info.sha = "?"
+	} else {
+		info.sha = sha
+	}
+
+	if len(rs.staged) == 0 && len(rs.unstaged) == 0 && len(rs.untracked) == 0 {
+		info.status = "clean"
+	} else {
+		info.status = "modified"
+	}
+
+	return info
 }
 
 func collectRepoInfo(root string, repo manifest.Repo) repoInfo {

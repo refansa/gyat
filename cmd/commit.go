@@ -50,7 +50,7 @@ repo. Workspace-root paths commit the umbrella repository.`,
 		if err != nil {
 			return err
 		}
-		return runCommitFrom(startDir, dir, commitMessage, commitNoVerify, cmd, args)
+		return runCommitWithFlagsFrom(startDir, dir, sharedTargetFlags, commitMessage, commitNoVerify, cmd, args)
 	},
 }
 
@@ -85,35 +85,59 @@ func buildCommitArgs(message string, noVerify bool) []string {
 // umbrella repository. The function signature mirrors runTrack so that tests
 // can invoke it directly without touching global flag state.
 func runCommit(dir, message string, noVerify bool, cmd *cobra.Command, args []string) error {
-	return runCommitFrom(dir, dir, message, noVerify, cmd, args)
+	return runCommitWithFlagsFrom(dir, dir, workspaceTargetFlags{}, message, noVerify, cmd, args)
 }
 
 func runCommitFrom(startDir, dir, message string, noVerify bool, cmd *cobra.Command, args []string) error {
+	return runCommitWithFlagsFrom(startDir, dir, workspaceTargetFlags{}, message, noVerify, cmd, args)
+}
+
+func runCommitWithFlagsFrom(startDir, dir string, flags workspaceTargetFlags, message string, noVerify bool, cmd *cobra.Command, args []string) error {
 	_ = dir
 	ws, err := workspace.Load(startDir)
 	if err != nil {
 		return err
 	}
-	return runCommitWorkspace(ws, startDir, message, noVerify, cmd, args)
+	return runCommitWorkspace(ws, startDir, flags, message, noVerify, cmd, args)
 }
 
-func runCommitWorkspace(ws workspace.Workspace, startDir, message string, noVerify bool, cmd *cobra.Command, args []string) error {
-	includeRoot, repoPaths, err := resolveCommitWorkspaceTargets(ws, startDir, args)
+func runCommitWorkspace(ws workspace.Workspace, startDir string, flags workspaceTargetFlags, message string, noVerify bool, cmd *cobra.Command, args []string) error {
+	targets, err := resolveCommitWorkspaceTargets(ws, startDir, flags, args)
 	if err != nil {
 		return err
 	}
 
-	selected := make(map[string]struct{}, len(repoPaths))
-	for _, repoPath := range repoPaths {
-		selected[repoPath] = struct{}{}
-	}
-
 	committed := 0
 	commitArgs := buildCommitArgs(message, noVerify)
+	var failures commandFailures
 
-	for _, repo := range ws.Manifest.Repos {
-		if _, ok := selected[repo.Path]; !ok {
+	for _, target := range targets {
+		if target.IsRoot {
+			statusOut, err := git.Run(ws.RootDir, "status", "--porcelain")
+			if err != nil {
+				if handledErr := failures.handle(flags.continueOnError, "checking umbrella status: %w", err); handledErr != nil {
+					return handledErr
+				}
+				continue
+			}
+			if !hasStagedChanges(statusOut) {
+				continue
+			}
+
+			fmt.Fprintln(cmd.ErrOrStderr(), "committing umbrella repository...")
+			if _, err := git.Run(ws.RootDir, commitArgs...); err != nil {
+				if handledErr := failures.handle(flags.continueOnError, "committing umbrella repository: %w", err); handledErr != nil {
+					return handledErr
+				}
+				continue
+			}
+			committed++
 			continue
+		}
+
+		repo, ok := workspaceRepoByPath(ws, target.Path)
+		if !ok {
+			return fmt.Errorf("tracked repository '%s' not found in manifest", target.Path)
 		}
 
 		repoDir := filepath.Join(ws.RootDir, filepath.FromSlash(repo.Path))
@@ -134,68 +158,47 @@ func runCommitWorkspace(ws workspace.Workspace, startDir, message string, noVeri
 
 		fmt.Fprintf(cmd.ErrOrStderr(), "committing '%s'...\n", repo.Path)
 		if _, err := git.Run(repoDir, commitArgs...); err != nil {
-			return fmt.Errorf("committing '%s': %w", repo.Path, err)
+			if handledErr := failures.handle(flags.continueOnError, "committing '%s': %w", repo.Path, err); handledErr != nil {
+				return handledErr
+			}
+			continue
 		}
 		committed++
-	}
-
-	if includeRoot {
-		statusOut, err := git.Run(ws.RootDir, "status", "--porcelain")
-		if err != nil {
-			return fmt.Errorf("checking umbrella status: %w", err)
-		}
-		if hasStagedChanges(statusOut) {
-			fmt.Fprintln(cmd.ErrOrStderr(), "committing umbrella repository...")
-			if _, err := git.Run(ws.RootDir, commitArgs...); err != nil {
-				return fmt.Errorf("committing umbrella repository: %w", err)
-			}
-			committed++
-		}
 	}
 
 	if committed == 0 {
 		fmt.Fprintln(cmd.ErrOrStderr(), "nothing to commit")
 	}
 
-	return nil
+	return failures.err("commit failed")
 }
 
-func resolveCommitWorkspaceTargets(ws workspace.Workspace, startDir string, args []string) (bool, []string, error) {
-	if len(args) == 0 {
-		repoPaths := make([]string, 0, len(ws.Manifest.Repos))
-		for _, repo := range ws.Manifest.Repos {
-			repoPaths = append(repoPaths, repo.Path)
-		}
-		return true, repoPaths, nil
+func resolveCommitWorkspaceTargets(ws workspace.Workspace, startDir string, flags workspaceTargetFlags, args []string) ([]workspace.Target, error) {
+	includeRoot := len(args) == 0 || flags.hasSelection()
+	if flags.noRoot {
+		includeRoot = false
 	}
 
-	includeRoot := false
-	seen := make(map[string]struct{}, len(args))
 	repoPaths := make([]string, 0, len(args))
-
 	for _, arg := range args {
 		selectRoot, repoPath, err := resolveCommitWorkspaceArg(ws, startDir, arg)
 		if err != nil {
-			return false, nil, err
+			return nil, err
 		}
 		if selectRoot {
+			if flags.noRoot {
+				return nil, fmt.Errorf("root selection cannot be combined with --no-root")
+			}
 			includeRoot = true
+			continue
 		}
 		if repoPath == "" {
 			continue
 		}
-		if _, exists := seen[repoPath]; exists {
-			continue
-		}
-		seen[repoPath] = struct{}{}
 		repoPaths = append(repoPaths, repoPath)
 	}
 
-	if !includeRoot && len(repoPaths) == 0 {
-		return false, nil, fmt.Errorf("no targets selected")
-	}
-
-	return includeRoot, repoPaths, nil
+	return ws.ResolveTargets(flags.targetOptions(includeRoot, repoPaths))
 }
 
 func resolveCommitWorkspaceArg(ws workspace.Workspace, startDir, arg string) (bool, string, error) {

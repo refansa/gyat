@@ -206,3 +206,40 @@ func TestRunCommit_WorkspaceInvalidSelector(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestRunCommit_WithRootOnlyFlagCommitsOnlyUmbrella(t *testing.T) {
+	t.Parallel()
+	skipIfNoGit(t)
+
+	umbrella, repoDirs := setupTrackedWorkspaceRepos(t, "svc-commit-v2-root-only")
+	repoDir := repoDirs["svc-commit-v2-root-only"]
+
+	writeFile(t, filepath.Join(repoDir, "handler.go"), "package main\n")
+	runGitIn(t, repoDir, "add", "handler.go")
+	writeFile(t, filepath.Join(umbrella, ".editorconfig"), "root = true\n")
+	runGitIn(t, umbrella, "add", ".editorconfig")
+
+	repoHeadBefore := runGitIn(t, repoDir, "rev-parse", "HEAD")
+
+	cc := &cobra.Command{}
+	cc.SetErr(io.Discard)
+	flags := workspaceTargetFlags{rootOnly: true}
+	if err := runCommitWithFlagsFrom(umbrella, umbrella, flags, "feat: root only commit", false, cc, nil); err != nil {
+		t.Fatalf("runCommitWithFlagsFrom: %v", err)
+	}
+
+	rootLog := runGitIn(t, umbrella, "log", "--oneline", "-1")
+	if !strings.Contains(rootLog, "feat: root only commit") {
+		t.Fatalf("expected umbrella log to contain root-only commit\ngot: %s", rootLog)
+	}
+
+	repoHeadAfter := runGitIn(t, repoDir, "rev-parse", "HEAD")
+	if repoHeadBefore != repoHeadAfter {
+		t.Fatalf("expected tracked repo HEAD to remain unchanged\nbefore: %s\nafter:  %s", repoHeadBefore, repoHeadAfter)
+	}
+
+	repoStatus := runGitIn(t, repoDir, "status", "--porcelain")
+	if !strings.Contains(repoStatus, "A  handler.go") {
+		t.Fatalf("expected tracked repo change to remain staged\ngot: %s", repoStatus)
+	}
+}

@@ -260,3 +260,34 @@ func TestRunAdd_WorkspaceDotUsesCurrentDirectory(t *testing.T) {
 		t.Errorf("expected umbrella root to be untouched, got staged: %q", staged)
 	}
 }
+
+func TestRunAdd_WithRepoFlagStagesOnlySelectedRepo(t *testing.T) {
+	t.Parallel()
+	skipIfNoGit(t)
+
+	umbrella, repoDirs := setupTrackedWorkspaceRepos(t, "svc-v2-flag-a", "svc-v2-flag-b")
+	writeFile(t, filepath.Join(umbrella, ".editorconfig"), "root = true\n")
+	dirtyTrackedRepo(t, repoDirs["svc-v2-flag-a"])
+	dirtyTrackedRepo(t, repoDirs["svc-v2-flag-b"])
+
+	cmd := &cobra.Command{}
+	cmd.SetErr(io.Discard)
+
+	flags := workspaceTargetFlags{
+		repoSelectors: []string{"svc-v2-flag-a"},
+		noRoot:        true,
+	}
+	if err := runAddWithFlagsFrom(umbrella, umbrella, flags, cmd, nil); err != nil {
+		t.Fatalf("runAddWithFlagsFrom: %v", err)
+	}
+
+	if staged := stagedFilesInDir(t, repoDirs["svc-v2-flag-a"]); !strings.Contains(staged, "new_feature.go") {
+		t.Fatalf("expected selected repo to stage new_feature.go\ngit diff --cached:\n%s", staged)
+	}
+	if staged := stagedFilesInDir(t, repoDirs["svc-v2-flag-b"]); staged != "" {
+		t.Fatalf("expected unselected repo to remain unstaged, got: %q", staged)
+	}
+	if staged := stagedFilesInDir(t, umbrella); staged != "" {
+		t.Fatalf("expected umbrella root to remain unstaged, got: %q", staged)
+	}
+}

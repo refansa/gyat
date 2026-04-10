@@ -25,6 +25,9 @@ existing manifest and reinitializes git cleanly.
 Nested gyat workspaces are not allowed: if the current directory is already
 inside another gyat workspace, init fails instead of creating a second one.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := sharedTargetFlags.validateUnsupported("init"); err != nil {
+			return err
+		}
 		dir, err := os.Getwd()
 		if err != nil {
 			return fmt.Errorf("get current directory: %w", err)

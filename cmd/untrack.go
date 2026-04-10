@@ -10,66 +10,88 @@ import (
 )
 
 var untrackCmd = &cobra.Command{
-	Use:   "untrack <path>",
+	Use:   "untrack [path...]",
 	Short: "Remove a tracked repository from the current gyat workspace",
 	Long: `Remove a tracked repository from the current gyat workspace.
 
 This removes the repository from the .gyat manifest, deletes its working-tree
 directory, and updates the gyat-managed block in .gitignore.`,
-	Args: cobra.ExactArgs(1),
+	Args: cobra.ArbitraryArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		dir, err := os.Getwd()
 		if err != nil {
 			return fmt.Errorf("get current directory: %w", err)
 		}
-		return runUntrack(dir, cmd, args)
+		return runUntrackWithFlags(dir, sharedTargetFlags, cmd, args)
 	},
 }
 
 func runUntrack(dir string, cmd *cobra.Command, args []string) error {
+	return runUntrackWithFlags(dir, workspaceTargetFlags{}, cmd, args)
+}
+
+func runUntrackWithFlags(dir string, flags workspaceTargetFlags, cmd *cobra.Command, args []string) error {
 	ws, err := workspace.Load(dir)
 	if err != nil {
 		return err
 	}
-	return runUntrackWorkspace(ws, dir, cmd, args)
+	return runUntrackWorkspace(ws, dir, flags, cmd, args)
 }
 
-func runUntrackWorkspace(ws workspace.Workspace, startDir string, cmd *cobra.Command, args []string) error {
-	repoPath, err := resolveWorkspaceRepoSelector(ws, startDir, args[0])
+func runUntrackWorkspace(ws workspace.Workspace, startDir string, flags workspaceTargetFlags, cmd *cobra.Command, args []string) error {
+	if flags.rootOnly {
+		return fmt.Errorf("untrack does not support --root-only")
+	}
+
+	repoSelectors, err := resolveWorkspaceRepoSelectors(ws, startDir, args)
+	if err != nil {
+		return err
+	}
+	if len(repoSelectors) == 0 && len(flags.repoSelectors) == 0 && len(flags.groups) == 0 {
+		return fmt.Errorf("at least one tracked repository is required")
+	}
+
+	targets, err := ws.ResolveTargets(flags.targetOptions(false, repoSelectors))
 	if err != nil {
 		return err
 	}
 
-	targets, err := ws.ResolveTargets(workspace.TargetOptions{
-		RepoSelectors: []string{repoPath},
-	})
-	if err != nil {
-		return err
-	}
-	if len(targets) != 1 || targets[0].IsRoot {
-		return fmt.Errorf("'%s' is not a tracked repository", args[0])
+	removedPaths := make([]string, 0, len(targets))
+	var failures commandFailures
+	for _, target := range targets {
+		if target.IsRoot {
+			continue
+		}
+
+		fmt.Fprintf(cmd.ErrOrStderr(), "removing tracked repository '%s'...\n", target.Path)
+		if err := os.RemoveAll(target.Dir); err != nil {
+			if handledErr := failures.handle(flags.continueOnError, "removing repository '%s': %w", target.Path, err); handledErr != nil {
+				return handledErr
+			}
+			continue
+		}
+
+		removedPaths = append(removedPaths, target.Path)
+		fmt.Fprintf(cmd.ErrOrStderr(), "untracked repository '%s'\n", target.Path)
 	}
 
-	target := targets[0]
-	fmt.Fprintf(cmd.ErrOrStderr(), "removing tracked repository '%s'...\n", target.Path)
-	if err := os.RemoveAll(target.Dir); err != nil {
-		return fmt.Errorf("removing repository working tree: %w", err)
+	if len(removedPaths) > 0 {
+		updated := ws.Manifest
+		for _, removedPath := range removedPaths {
+			updated.Repos = removeTrackedRepo(updated.Repos, removedPath)
+		}
+		if err := manifest.SaveDir(ws.RootDir, updated); err != nil {
+			return err
+		}
+		if changed, err := workspace.SyncGitIgnore(ws.RootDir, updated); err != nil {
+			return err
+		} else if changed {
+			fmt.Fprintln(cmd.ErrOrStderr(), "updated .gitignore managed block")
+		}
+		fmt.Fprintln(cmd.ErrOrStderr(), "hint: commit the changes to .gyat and .gitignore")
 	}
 
-	updated := ws.Manifest
-	updated.Repos = removeTrackedRepo(updated.Repos, target.Path)
-	if err := manifest.SaveDir(ws.RootDir, updated); err != nil {
-		return err
-	}
-	if changed, err := workspace.SyncGitIgnore(ws.RootDir, updated); err != nil {
-		return err
-	} else if changed {
-		fmt.Fprintln(cmd.ErrOrStderr(), "updated .gitignore managed block")
-	}
-
-	fmt.Fprintf(cmd.ErrOrStderr(), "untracked repository '%s'\n", target.Path)
-	fmt.Fprintln(cmd.ErrOrStderr(), "hint: commit the changes to .gyat and .gitignore")
-	return nil
+	return failures.err("untrack failed")
 }
 
 func removeTrackedRepo(repos []manifest.Repo, targetPath string) []manifest.Repo {
