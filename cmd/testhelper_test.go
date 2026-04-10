@@ -32,7 +32,7 @@ func newUmbrellaRepo(t *testing.T) string {
 }
 
 // newSourceRepo creates a new git repository with an initial commit, making it
-// suitable as a submodule source (git submodule add requires a non-empty repo).
+// suitable as a tracked repo source for workspace tests.
 func newSourceRepo(t *testing.T) string {
 	t.Helper()
 
@@ -58,7 +58,7 @@ func newSourceRepo(t *testing.T) string {
 //
 //	<base>/
 //	  umbrella/   ← gyat-managed repo
-//	  <name>/     ← repo to be added as submodule
+//	  <name>/     ← repo to be tracked in the workspace
 func newTestSetup(t *testing.T, sourceName string) (umbrella, source string) {
 	t.Helper()
 
@@ -81,7 +81,7 @@ func newTestSetup(t *testing.T, sourceName string) (umbrella, source string) {
 	runGitIn(t, umbrella, "config", "commit.gpgsign", "false")
 	runGitIn(t, umbrella, "config", "core.autocrlf", "false")
 
-	// Source — needs a commit to be usable as a submodule.
+	// Source — needs a commit so clones and updates have a valid HEAD.
 	runGitIn(t, source, "init")
 	runGitIn(t, source, "config", "user.email", "test@gyat.test")
 	runGitIn(t, source, "config", "user.name", "gyat test")

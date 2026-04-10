@@ -1,14 +1,11 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 
-	"github.com/refansa/gyat/internal/git"
-	"github.com/refansa/gyat/internal/manifest"
-	"github.com/refansa/gyat/internal/workspace"
+	"github.com/refansa/gyat/v2/internal/manifest"
+	"github.com/refansa/gyat/v2/internal/workspace"
 	"github.com/spf13/cobra"
 )
 
@@ -31,19 +28,20 @@ directory, and updates the gyat-managed block in .gitignore.`,
 
 func runUntrack(dir string, cmd *cobra.Command, args []string) error {
 	ws, err := workspace.Load(dir)
-	if err == nil {
-		return runUntrackWorkspace(ws, cmd, args)
+	if err != nil {
+		return err
 	}
-	if !errors.Is(err, workspace.ErrNotFound) {
+	return runUntrackWorkspace(ws, dir, cmd, args)
+}
+
+func runUntrackWorkspace(ws workspace.Workspace, startDir string, cmd *cobra.Command, args []string) error {
+	repoPath, err := resolveWorkspaceRepoSelector(ws, startDir, args[0])
+	if err != nil {
 		return err
 	}
 
-	return runUntrackLegacy(dir, cmd, args)
-}
-
-func runUntrackWorkspace(ws workspace.Workspace, cmd *cobra.Command, args []string) error {
 	targets, err := ws.ResolveTargets(workspace.TargetOptions{
-		RepoSelectors: []string{args[0]},
+		RepoSelectors: []string{repoPath},
 	})
 	if err != nil {
 		return err
@@ -83,29 +81,4 @@ func removeTrackedRepo(repos []manifest.Repo, targetPath string) []manifest.Repo
 		filtered = append(filtered, repo)
 	}
 	return filtered
-}
-
-func runUntrackLegacy(dir string, cmd *cobra.Command, args []string) error {
-	path := filepath.Clean(args[0])
-
-	// Step 1: deinit the submodule
-	fmt.Fprintf(cmd.ErrOrStderr(), "deinitializing submodule '%s'...\n", path)
-	if _, err := git.Run(dir, "submodule", "deinit", "-f", path); err != nil {
-		return fmt.Errorf("failed to deinit submodule: %w", err)
-	}
-
-	// Step 2: remove the cached module data from .git/modules
-	modulesPath := filepath.Join(dir, ".git", "modules", path)
-	if err := os.RemoveAll(modulesPath); err != nil {
-		return fmt.Errorf("failed to remove module cache: %w", err)
-	}
-
-	// Step 3: remove the submodule from the index and working tree
-	if _, err := git.Run(dir, "rm", "-f", path); err != nil {
-		return fmt.Errorf("failed to remove submodule from index: %w", err)
-	}
-
-	fmt.Fprintf(cmd.ErrOrStderr(), "untracked submodule '%s'\n", path)
-	fmt.Fprintln(cmd.ErrOrStderr(), "hint: don't forget to commit the changes to .gitmodules and the index")
-	return nil
 }

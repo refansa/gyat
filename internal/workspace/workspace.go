@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/refansa/gyat/internal/manifest"
+	"github.com/refansa/gyat/v2/internal/manifest"
 )
 
 // ErrNotFound indicates that no gyat workspace root could be found.

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/refansa/gyat/cmd"
+	"github.com/refansa/gyat/v2/cmd"
 )
 
 func main() {

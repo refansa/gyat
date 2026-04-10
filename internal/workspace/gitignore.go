@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/refansa/gyat/internal/manifest"
+	"github.com/refansa/gyat/v2/internal/manifest"
 )
 
 const (

@@ -1,16 +1,14 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"unicode/utf8"
 
-	"github.com/refansa/gyat/internal/git"
-	"github.com/refansa/gyat/internal/workspace"
+	"github.com/refansa/gyat/v2/internal/git"
+	"github.com/refansa/gyat/v2/internal/workspace"
 	"github.com/spf13/cobra"
 )
 
@@ -147,7 +145,7 @@ func collectRepoStatus(dir string) (repoStatus, error) {
 
 // printRepoSection writes one repository's status block to out.
 // label is the human-friendly name shown in the section header (e.g.
-// "umbrella repository" or a submodule path like "services/auth").
+// "umbrella repository" or a tracked repo path like "services/auth").
 func printRepoSection(out io.Writer, label string, rs repoStatus) {
 	header := fmt.Sprintf("%s — %s", label, rs.branch)
 	sep := strings.Repeat("─", utf8.RuneCountInString(header))
@@ -198,14 +196,10 @@ func printUnavailableRepo(out io.Writer, path, status string) {
 
 func runStatus(dir string, cmd *cobra.Command, args []string) error {
 	ws, err := workspace.Load(dir)
-	if err == nil {
-		return runStatusWorkspace(ws, cmd, args)
-	}
-	if !errors.Is(err, workspace.ErrNotFound) {
+	if err != nil {
 		return err
 	}
-
-	return runStatusLegacy(dir, cmd, args)
+	return runStatusWorkspace(ws, cmd, args)
 }
 
 // runStatusWorkspace prints a status report for the umbrella repository and the
@@ -251,51 +245,6 @@ func runStatusWorkspace(ws workspace.Workspace, cmd *cobra.Command, args []strin
 			continue
 		}
 		printRepoSection(stdout, target.Path, rs)
-	}
-
-	return nil
-}
-
-// runStatusLegacy keeps the old submodule-driven status behavior available as a
-// temporary fallback for non-.gyat repositories during the v2 migration.
-func runStatusLegacy(dir string, cmd *cobra.Command, args []string) error {
-	stdout := cmd.OutOrStdout()
-	errout := cmd.ErrOrStderr()
-
-	submodulePaths, err := allSubmodulePaths(dir)
-	if err != nil {
-		return err
-	}
-
-	umbrellaStatus, err := collectRepoStatus(dir)
-	if err != nil {
-		return fmt.Errorf("umbrella repository: %w", err)
-	}
-	printRepoSection(stdout, "umbrella repository", umbrellaStatus)
-
-	if len(submodulePaths) == 0 {
-		fmt.Fprintln(errout, "hint: use 'gyat track <repo>' to add a repository")
-		return nil
-	}
-
-	targets, err := resolveTargetPaths(submodulePaths, args)
-	if err != nil {
-		return err
-	}
-
-	for _, path := range targets {
-		subDir := filepath.Join(dir, path)
-		if _, statErr := os.Stat(subDir); os.IsNotExist(statErr) {
-			printUnavailableRepo(stdout, path, "not initialized")
-			continue
-		}
-
-		rs, err := collectRepoStatus(subDir)
-		if err != nil {
-			fmt.Fprintf(errout, "warning: could not get status of '%s': %v\n", path, err)
-			continue
-		}
-		printRepoSection(stdout, path, rs)
 	}
 
 	return nil

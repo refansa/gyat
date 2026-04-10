@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	gyatruntime "github.com/refansa/gyat/internal/runtime"
+	gyatruntime "github.com/refansa/gyat/v2/internal/runtime"
 	"github.com/spf13/cobra"
 )
 

@@ -1,16 +1,15 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/refansa/gyat/internal/git"
-	"github.com/refansa/gyat/internal/manifest"
-	"github.com/refansa/gyat/internal/workspace"
+	"github.com/refansa/gyat/v2/internal/git"
+	"github.com/refansa/gyat/v2/internal/manifest"
+	"github.com/refansa/gyat/v2/internal/workspace"
 	"github.com/spf13/cobra"
 )
 
@@ -38,14 +37,10 @@ var listCmd = &cobra.Command{
 
 func runList(dir string, cmd *cobra.Command, args []string) error {
 	ws, err := workspace.Load(dir)
-	if err == nil {
-		return runListWorkspace(ws, cmd)
-	}
-	if !errors.Is(err, workspace.ErrNotFound) {
+	if err != nil {
 		return err
 	}
-
-	return runListLegacy(dir, cmd, args)
+	return runListWorkspace(ws, cmd)
 }
 
 func runListWorkspace(ws workspace.Workspace, cmd *cobra.Command) error {
@@ -64,125 +59,6 @@ func runListWorkspace(ws workspace.Workspace, cmd *cobra.Command) error {
 	}
 
 	printRepoTable(stdout, repos)
-	return nil
-}
-
-func runListLegacy(dir string, cmd *cobra.Command, args []string) error {
-	stdout := cmd.OutOrStdout()
-	errout := cmd.ErrOrStderr()
-
-	if _, err := os.Stat(filepath.Join(dir, ".gitmodules")); os.IsNotExist(err) {
-		fmt.Fprintln(stdout, "no submodules found")
-		fmt.Fprintln(errout, "hint: use 'gyat track <repo>' to add a repository")
-		return nil
-	}
-
-	// Gather all submodule paths registered in .gitmodules.
-	pathsOut, err := git.Run(dir, "config", "-f", ".gitmodules", "--get-regexp", `submodule\..*\.path`)
-	if err != nil || strings.TrimSpace(pathsOut) == "" {
-		fmt.Fprintln(stdout, "no submodules found")
-		fmt.Fprintln(errout, "hint: use 'gyat track <repo>' to add a repository")
-		return nil
-	}
-
-	// Parse "submodule.<name>.path <path>" lines into a name->info map.
-	submodules := []repoInfo{}
-	nameByPath := map[string]string{}
-
-	for _, line := range strings.Split(pathsOut, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-
-		parts := strings.Fields(line)
-		if len(parts) != 2 {
-			continue
-		}
-
-		// key is like "submodule.services/auth.path"
-		key := parts[0]
-		path := parts[1]
-
-		// Extract the submodule name from between the first and last dots.
-		withoutPrefix := strings.TrimPrefix(key, "submodule.")
-		name := strings.TrimSuffix(withoutPrefix, ".path")
-
-		nameByPath[path] = name
-		submodules = append(submodules, repoInfo{path: path})
-	}
-
-	// Enrich each submodule with its URL and branch from .gitmodules.
-	for i, sub := range submodules {
-		name := nameByPath[sub.path]
-
-		url, _ := git.Run(dir, "config", "-f", ".gitmodules", fmt.Sprintf("submodule.%s.url", name))
-		branch, _ := git.Run(dir, "config", "-f", ".gitmodules", fmt.Sprintf("submodule.%s.branch", name))
-
-		submodules[i].url = url
-		if branch == "" {
-			submodules[i].branch = "(default)"
-		} else {
-			submodules[i].branch = branch
-		}
-	}
-
-	// Parse "git submodule status" for SHA and status.
-	// Output format: [prefix]<sha1> <path> [(<describe>)]
-	// Prefix: ' ' = ok, '-' = not initialized, '+' = modified, 'U' = conflict
-	statusOut, _ := git.Run(dir, "submodule", "status")
-	statusByPath := map[string]struct {
-		sha    string
-		status string
-	}{}
-
-	for _, line := range strings.Split(statusOut, "\n") {
-		if len(line) < 2 {
-			continue
-		}
-
-		prefix := line[0]
-		rest := strings.Fields(line[1:])
-		if len(rest) < 2 {
-			continue
-		}
-
-		sha := rest[0]
-		if len(sha) > 8 {
-			sha = sha[:8]
-		}
-		path := rest[1]
-
-		var label string
-		switch prefix {
-		case '-':
-			label = "not initialized"
-		case '+':
-			label = "modified"
-		case 'U':
-			label = "merge conflict"
-		default:
-			label = "up to date"
-		}
-
-		statusByPath[path] = struct {
-			sha    string
-			status string
-		}{sha: sha, status: label}
-	}
-
-	for i, sub := range submodules {
-		if info, ok := statusByPath[sub.path]; ok {
-			submodules[i].sha = info.sha
-			submodules[i].status = info.status
-		} else {
-			submodules[i].sha = "?"
-			submodules[i].status = "unknown"
-		}
-	}
-
-	printRepoTable(stdout, submodules)
-
 	return nil
 }
 

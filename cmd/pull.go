@@ -3,10 +3,11 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
-	"github.com/refansa/gyat/internal/git"
+	"github.com/refansa/gyat/v2/internal/git"
+	"github.com/refansa/gyat/v2/internal/manifest"
+	"github.com/refansa/gyat/v2/internal/workspace"
 	"github.com/spf13/cobra"
 )
 
@@ -14,83 +15,101 @@ var pullRebase bool
 
 var pullCmd = &cobra.Command{
 	Use:   "pull [path...]",
-	Short: "Pull latest commits in submodules and the umbrella repository",
-	Long: `Pull the latest commits from the remote for all or specified submodules and
+	Short: "Pull latest commits in tracked repos and the umbrella repository",
+	Long: `Pull the latest commits from the remote for all or specified tracked repos and
 the umbrella repository.
 
-With no arguments, every checked-out submodule is pulled, then the umbrella
+With no arguments, every cloned tracked repo is pulled, then the umbrella
 repository is pulled if an upstream tracking branch is configured.
 
-With one or more path arguments only the specified submodules are pulled,
+With one or more path arguments only the specified tracked repos are pulled,
 then the umbrella repository.
 
 Each repository must be on a local branch with an upstream tracking branch.
-Submodules in detached HEAD state will fail — use 'gyat update' instead to
-fetch the latest remote commit for detached submodule pointers.`,
-	Example: `  # Pull all submodules and the umbrella
+Tracked repos in detached HEAD state will fail — use 'gyat update' instead to
+fetch the latest remote commit for a detached repository.`,
+	Example: `  # Pull all tracked repos and the umbrella
   gyat pull
 
   # Pull with rebase instead of merge
   gyat pull --rebase
 
-  # Pull specific submodules only
+	# Pull specific tracked repos only
   gyat pull services/auth services/billing`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		startDir, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("get current directory: %w", err)
+		}
 		dir, err := execDir()
 		if err != nil {
 			return err
 		}
-		return runPull(dir, pullRebase, cmd, args)
+		return runPullFrom(startDir, dir, pullRebase, cmd, args)
 	},
 }
 
-// runPull pulls the latest commits for the resolved target submodules and,
-// if an upstream is configured, the umbrella repository itself.
+// runPull pulls the latest commits for the selected tracked repos and, if an
+// upstream is configured, the umbrella repository itself.
 func runPull(dir string, rebase bool, cmd *cobra.Command, args []string) error {
-	submodulePaths, err := allSubmodulePaths(dir)
+	return runPullFrom(dir, dir, rebase, cmd, args)
+}
+
+func runPullFrom(startDir, dir string, rebase bool, cmd *cobra.Command, args []string) error {
+	_ = dir
+	ws, err := workspace.Load(startDir)
+	if err != nil {
+		return err
+	}
+	return runPullWorkspace(ws, startDir, rebase, cmd, args)
+}
+
+func runPullWorkspace(ws workspace.Workspace, startDir string, rebase bool, cmd *cobra.Command, args []string) error {
+	selectors, err := resolveWorkspaceRepoSelectors(ws, startDir, args)
 	if err != nil {
 		return err
 	}
 
-	urlMap, err := submoduleURLMap(dir)
-	if err != nil {
-		return err
-	}
-
-	gitArgs := []string{"pull"}
+	g := []string{"pull"}
 	if rebase {
-		gitArgs = append(gitArgs, "--rebase")
-	}
-
-	targets, err := resolveTargetPaths(submodulePaths, args)
-	if err != nil {
-		return err
+		g = append(g, "--rebase")
 	}
 
 	pulled := 0
+	var targets []workspace.Target
+	if len(ws.Manifest.Repos) > 0 {
+		targets, err = ws.ResolveTargets(workspace.TargetOptions{RepoSelectors: selectors})
+		if err != nil {
+			return err
+		}
+	}
 
-	for _, path := range targets {
-		if url, ok := urlMap[path]; ok && isLocalPath(url) {
-			fmt.Fprintf(cmd.ErrOrStderr(), "hint: '%s' uses a local path remote — skipping\n", path)
+	for _, target := range targets {
+		repo, ok := workspaceRepoByPath(ws, target.Path)
+		if !ok {
+			return fmt.Errorf("tracked repository '%s' not found in manifest", target.Path)
+		}
+		if isLocalPath(repo.URL) {
+			fmt.Fprintf(cmd.ErrOrStderr(), "hint: '%s' uses a local path remote — skipping\n", target.Path)
 			continue
 		}
-
-		subDir := filepath.Join(dir, path)
-		if _, err := os.Stat(subDir); os.IsNotExist(err) {
-			fmt.Fprintf(cmd.ErrOrStderr(), "warning: submodule '%s' is not checked out, skipping\n", path)
+		if _, err := os.Stat(target.Dir); os.IsNotExist(err) {
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: tracked repository '%s' is not cloned, skipping\n", target.Path)
 			continue
+		} else if err != nil {
+			return err
 		}
 
-		fmt.Fprintf(cmd.ErrOrStderr(), "pulling '%s'...\n", path)
-		if err := git.RunInteractive(subDir, gitArgs...); err != nil {
-			return fmt.Errorf("pulling '%s': %w", path, err)
+		fmt.Fprintf(cmd.ErrOrStderr(), "pulling '%s'...\n", target.Path)
+		if err := git.RunInteractive(target.Dir, g...); err != nil {
+			return fmt.Errorf("pulling '%s': %w", target.Path, err)
 		}
 		pulled++
 	}
 
-	if hasUpstream(dir) {
+	if hasUpstream(ws.RootDir) {
 		fmt.Fprintln(cmd.ErrOrStderr(), "pulling umbrella repository...")
-		if err := git.RunInteractive(dir, gitArgs...); err != nil {
+		if err := git.RunInteractive(ws.RootDir, g...); err != nil {
 			return fmt.Errorf("pulling umbrella repository: %w", err)
 		}
 		pulled++
@@ -103,52 +122,61 @@ func runPull(dir string, rebase bool, cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// submoduleURLMap returns a map from submodule filesystem path to the URL
-// recorded in .gitmodules. Returns nil when .gitmodules is absent or empty.
-// The map key is the path value normalised with filepath.ToSlash/Clean so it
-// matches the paths returned by allSubmodulePaths.
-func submoduleURLMap(dir string) (map[string]string, error) {
-	pathsOut, err := git.Run(dir, "config", "-f", ".gitmodules", "--get-regexp", `submodule\..*\.path`)
-	if err != nil || strings.TrimSpace(pathsOut) == "" {
+func resolveWorkspaceRepoSelectors(ws workspace.Workspace, startDir string, args []string) ([]string, error) {
+	if len(args) == 0 {
 		return nil, nil
 	}
 
-	urlsOut, err := git.Run(dir, "config", "-f", ".gitmodules", "--get-regexp", `submodule\..*\.url`)
-	if err != nil || strings.TrimSpace(urlsOut) == "" {
-		return nil, nil
-	}
+	selectors := make([]string, 0, len(args))
+	seen := make(map[string]struct{}, len(args))
 
-	// Build section-name → normalised path.
-	nameToPath := make(map[string]string)
-	for _, line := range strings.Split(pathsOut, "\n") {
-		line = strings.TrimRight(line, "\r")
-		parts := strings.Fields(line)
-		if len(parts) != 2 {
+	for _, arg := range args {
+		repoPath, err := resolveWorkspaceRepoSelector(ws, startDir, arg)
+		if err != nil {
+			return nil, err
+		}
+		if _, exists := seen[repoPath]; exists {
 			continue
 		}
-		// key format: "submodule.<name>.path"
-		name := strings.TrimPrefix(parts[0], "submodule.")
-		name = strings.TrimSuffix(name, ".path")
-		nameToPath[name] = filepath.ToSlash(filepath.Clean(parts[1]))
+		seen[repoPath] = struct{}{}
+		selectors = append(selectors, repoPath)
 	}
 
-	// Build normalised path → URL.
-	result := make(map[string]string)
-	for _, line := range strings.Split(urlsOut, "\n") {
-		line = strings.TrimRight(line, "\r")
-		parts := strings.Fields(line)
-		if len(parts) != 2 {
-			continue
-		}
-		// key format: "submodule.<name>.url"
-		name := strings.TrimPrefix(parts[0], "submodule.")
-		name = strings.TrimSuffix(name, ".url")
-		if path, ok := nameToPath[name]; ok {
-			result[path] = parts[1]
+	return selectors, nil
+}
+
+func resolveWorkspaceRepoSelector(ws workspace.Workspace, startDir, arg string) (string, error) {
+	trimmed := strings.TrimSpace(arg)
+	if trimmed == "" {
+		return "", fmt.Errorf("path is required")
+	}
+
+	for _, repo := range ws.Manifest.Repos {
+		if repo.Name == trimmed {
+			return repo.Path, nil
 		}
 	}
 
-	return result, nil
+	rel, err := normalizeWorkspaceArg(ws.RootDir, startDir, trimmed)
+	if err != nil {
+		return "", err
+	}
+
+	repoPath, _, _, matched := matchTrackedRepo(ws.Manifest.Repos, rel)
+	if matched {
+		return repoPath, nil
+	}
+
+	return "", fmt.Errorf("'%s' is not a tracked repository", arg)
+}
+
+func workspaceRepoByPath(ws workspace.Workspace, path string) (manifest.Repo, bool) {
+	for _, repo := range ws.Manifest.Repos {
+		if repo.Path == path {
+			return repo, true
+		}
+	}
+	return manifest.Repo{}, false
 }
 
 // hasUpstream reports whether the current branch in dir has an upstream
@@ -156,34 +184,6 @@ func submoduleURLMap(dir string) (map[string]string, error) {
 func hasUpstream(dir string) bool {
 	_, err := git.Run(dir, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
 	return err == nil
-}
-
-// resolveTargetPaths returns the submodule paths to operate on. When args is
-// empty every registered submodule path is returned unchanged. Otherwise each
-// arg is validated against the registered paths and an error is returned for
-// any arg that is not a registered submodule. Paths are normalised with
-// filepath.ToSlash(filepath.Clean(p)) so that callers on Windows can pass
-// either forward- or back-slash separated paths.
-func resolveTargetPaths(submodulePaths, args []string) ([]string, error) {
-	if len(args) == 0 {
-		return submodulePaths, nil
-	}
-
-	registered := make(map[string]struct{}, len(submodulePaths))
-	for _, p := range submodulePaths {
-		registered[filepath.ToSlash(filepath.Clean(p))] = struct{}{}
-	}
-
-	var targets []string
-	for _, arg := range args {
-		norm := filepath.ToSlash(filepath.Clean(arg))
-		if _, ok := registered[norm]; !ok {
-			return nil, fmt.Errorf("'%s' is not a registered submodule", arg)
-		}
-		targets = append(targets, norm)
-	}
-
-	return targets, nil
 }
 
 func init() {

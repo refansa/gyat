@@ -6,7 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/refansa/gyat/internal/git"
+	"github.com/refansa/gyat/v2/internal/git"
+	"github.com/refansa/gyat/v2/internal/workspace"
 	"github.com/spf13/cobra"
 )
 
@@ -17,21 +18,23 @@ var (
 
 var commitCmd = &cobra.Command{
 	Use:   "commit [path...]",
-	Short: "Commit staged changes across submodules and the umbrella repository",
-	Long: `Commit staged changes in submodules and the umbrella repository.
+	Short: "Commit staged changes across tracked repos and the umbrella repository",
+	Long: `Commit staged changes in tracked repos and the umbrella repository.
 
-With no arguments, every checked-out submodule that has staged changes is
-committed, then the updated submodule refs are staged in the umbrella
-repository and the umbrella itself is committed — all with the same message.
+With no arguments, every tracked repo that has staged changes is committed,
+followed by the umbrella repository if it also has staged changes.
 
-With one or more path arguments only the specified submodules are committed.
-The umbrella repository is still committed afterwards if submodule refs
-were updated.`,
-	Example: `  # Commit all submodules with staged changes, then the umbrella
+With one or more path arguments only the selected repositories are committed.
+Arguments may be tracked repo names, repo paths, or paths inside a tracked
+repo. Workspace-root paths commit the umbrella repository.`,
+	Example: `  # Commit all staged repos, then the umbrella
   gyat commit -m "feat: add login endpoint"
 
-  # Commit only specific submodules
+  # Commit only specific tracked repos
   gyat commit -m "fix: typo" services/auth services/billing
+
+  # Commit only the umbrella repository
+  gyat commit -m "chore: update workspace docs" .gitignore
 
   # Skip git hooks
   gyat commit -m "wip" --no-verify`,
@@ -39,11 +42,15 @@ were updated.`,
 		if commitMessage == "" {
 			return fmt.Errorf("required flag \"message\" not set")
 		}
+		startDir, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("get current directory: %w", err)
+		}
 		dir, err := execDir()
 		if err != nil {
 			return err
 		}
-		return runCommit(dir, commitMessage, commitNoVerify, cmd, args)
+		return runCommitFrom(startDir, dir, commitMessage, commitNoVerify, cmd, args)
 	},
 }
 
@@ -74,67 +81,76 @@ func buildCommitArgs(message string, noVerify bool) []string {
 	return args
 }
 
-// runCommit commits staged changes in targeted (or all) submodules and then
-// commits the umbrella repository. The function signature mirrors runTrack so
-// that tests can invoke it directly without touching global flag state.
+// runCommit commits staged changes in targeted repositories and/or the
+// umbrella repository. The function signature mirrors runTrack so that tests
+// can invoke it directly without touching global flag state.
 func runCommit(dir, message string, noVerify bool, cmd *cobra.Command, args []string) error {
-	submodulePaths, err := allSubmodulePaths(dir)
+	return runCommitFrom(dir, dir, message, noVerify, cmd, args)
+}
+
+func runCommitFrom(startDir, dir, message string, noVerify bool, cmd *cobra.Command, args []string) error {
+	_ = dir
+	ws, err := workspace.Load(startDir)
+	if err != nil {
+		return err
+	}
+	return runCommitWorkspace(ws, startDir, message, noVerify, cmd, args)
+}
+
+func runCommitWorkspace(ws workspace.Workspace, startDir, message string, noVerify bool, cmd *cobra.Command, args []string) error {
+	includeRoot, repoPaths, err := resolveCommitWorkspaceTargets(ws, startDir, args)
 	if err != nil {
 		return err
 	}
 
-	if len(args) == 0 {
-		return commitAll(dir, message, noVerify, submodulePaths, cmd)
+	selected := make(map[string]struct{}, len(repoPaths))
+	for _, repoPath := range repoPaths {
+		selected[repoPath] = struct{}{}
 	}
-	return commitTargeted(dir, message, noVerify, submodulePaths, args, cmd)
-}
 
-// commitAll iterates over every registered submodule path, commits those with
-// staged changes, stages the updated refs in the umbrella, and commits the
-// umbrella.
-func commitAll(dir, message string, noVerify bool, submodulePaths []string, cmd *cobra.Command) error {
 	committed := 0
+	commitArgs := buildCommitArgs(message, noVerify)
 
-	for _, sub := range submodulePaths {
-		subDir := filepath.Join(dir, sub)
-		if _, err := os.Stat(subDir); os.IsNotExist(err) {
-			fmt.Fprintf(cmd.ErrOrStderr(), "warning: submodule '%s' is not checked out, skipping\n", sub)
+	for _, repo := range ws.Manifest.Repos {
+		if _, ok := selected[repo.Path]; !ok {
 			continue
 		}
 
-		statusOut, err := git.Run(subDir, "status", "--porcelain")
+		repoDir := filepath.Join(ws.RootDir, filepath.FromSlash(repo.Path))
+		if _, err := os.Stat(repoDir); os.IsNotExist(err) {
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: tracked repository '%s' is not cloned, skipping\n", repo.Path)
+			continue
+		} else if err != nil {
+			return err
+		}
+
+		statusOut, err := git.Run(repoDir, "status", "--porcelain")
 		if err != nil {
-			return fmt.Errorf("checking status of '%s': %w", sub, err)
+			return fmt.Errorf("checking status of '%s': %w", repo.Path, err)
 		}
 		if !hasStagedChanges(statusOut) {
 			continue
 		}
 
-		fmt.Fprintf(cmd.ErrOrStderr(), "committing '%s'...\n", sub)
-		commitArgs := buildCommitArgs(message, noVerify)
-		if _, err := git.Run(subDir, commitArgs...); err != nil {
-			return fmt.Errorf("committing '%s': %w", sub, err)
+		fmt.Fprintf(cmd.ErrOrStderr(), "committing '%s'...\n", repo.Path)
+		if _, err := git.Run(repoDir, commitArgs...); err != nil {
+			return fmt.Errorf("committing '%s': %w", repo.Path, err)
 		}
 		committed++
-
-		// Stage the updated submodule ref in the umbrella.
-		if _, err := git.Run(dir, "add", sub); err != nil {
-			return fmt.Errorf("staging submodule ref '%s': %w", sub, err)
-		}
 	}
 
-	// Commit the umbrella if it has staged changes.
-	umbrellaStatus, err := git.Run(dir, "status", "--porcelain")
-	if err != nil {
-		return fmt.Errorf("checking umbrella status: %w", err)
-	}
-	if hasStagedChanges(umbrellaStatus) {
-		fmt.Fprintln(cmd.ErrOrStderr(), "committing umbrella repository...")
-		commitArgs := buildCommitArgs(message, noVerify)
-		if _, err := git.Run(dir, commitArgs...); err != nil {
-			return fmt.Errorf("committing umbrella repository: %w", err)
+	if includeRoot {
+		statusOut, err := git.Run(ws.RootDir, "status", "--porcelain")
+		if err != nil {
+			return fmt.Errorf("checking umbrella status: %w", err)
 		}
-		committed++
+		if hasStagedChanges(statusOut) {
+			fmt.Fprintln(cmd.ErrOrStderr(), "committing umbrella repository...")
+			if _, err := git.Run(ws.RootDir, commitArgs...); err != nil {
+				return fmt.Errorf("committing umbrella repository: %w", err)
+			}
+			committed++
+		}
 	}
 
 	if committed == 0 {
@@ -144,68 +160,82 @@ func commitAll(dir, message string, noVerify bool, submodulePaths []string, cmd 
 	return nil
 }
 
-// commitTargeted commits only the submodules specified by args, stages their
-// updated refs in the umbrella, and commits the umbrella.
-func commitTargeted(dir, message string, noVerify bool, submodulePaths, args []string, cmd *cobra.Command) error {
-	registered := make(map[string]bool, len(submodulePaths))
-	for _, p := range submodulePaths {
-		registered[filepath.ToSlash(filepath.Clean(p))] = true
+func resolveCommitWorkspaceTargets(ws workspace.Workspace, startDir string, args []string) (bool, []string, error) {
+	if len(args) == 0 {
+		repoPaths := make([]string, 0, len(ws.Manifest.Repos))
+		for _, repo := range ws.Manifest.Repos {
+			repoPaths = append(repoPaths, repo.Path)
+		}
+		return true, repoPaths, nil
 	}
 
-	committed := 0
+	includeRoot := false
+	seen := make(map[string]struct{}, len(args))
+	repoPaths := make([]string, 0, len(args))
 
 	for _, arg := range args {
-		norm := filepath.ToSlash(filepath.Clean(arg))
-		if !registered[norm] {
-			return fmt.Errorf("'%s' is not a registered submodule", arg)
-		}
-
-		subDir := filepath.Join(dir, norm)
-		if _, err := os.Stat(subDir); os.IsNotExist(err) {
-			fmt.Fprintf(cmd.ErrOrStderr(), "warning: submodule '%s' is not checked out, skipping\n", norm)
-			continue
-		}
-
-		statusOut, err := git.Run(subDir, "status", "--porcelain")
+		selectRoot, repoPath, err := resolveCommitWorkspaceArg(ws, startDir, arg)
 		if err != nil {
-			return fmt.Errorf("checking status of '%s': %w", norm, err)
+			return false, nil, err
 		}
-		if !hasStagedChanges(statusOut) {
+		if selectRoot {
+			includeRoot = true
+		}
+		if repoPath == "" {
 			continue
 		}
-
-		fmt.Fprintf(cmd.ErrOrStderr(), "committing '%s'...\n", norm)
-		commitArgs := buildCommitArgs(message, noVerify)
-		if _, err := git.Run(subDir, commitArgs...); err != nil {
-			return fmt.Errorf("committing '%s': %w", norm, err)
+		if _, exists := seen[repoPath]; exists {
+			continue
 		}
-		committed++
+		seen[repoPath] = struct{}{}
+		repoPaths = append(repoPaths, repoPath)
+	}
 
-		// Stage the updated submodule ref in the umbrella.
-		if _, err := git.Run(dir, "add", norm); err != nil {
-			return fmt.Errorf("staging submodule ref '%s': %w", norm, err)
+	if !includeRoot && len(repoPaths) == 0 {
+		return false, nil, fmt.Errorf("no targets selected")
+	}
+
+	return includeRoot, repoPaths, nil
+}
+
+func resolveCommitWorkspaceArg(ws workspace.Workspace, startDir, arg string) (bool, string, error) {
+	trimmed := strings.TrimSpace(arg)
+	if trimmed == "" {
+		return false, "", fmt.Errorf("path is required")
+	}
+
+	for _, repo := range ws.Manifest.Repos {
+		if repo.Name == trimmed {
+			return false, repo.Path, nil
 		}
 	}
 
-	// Commit the umbrella if it has staged changes after staging refs.
-	umbrellaStatus, err := git.Run(dir, "status", "--porcelain")
+	rel, err := normalizeWorkspaceArg(ws.RootDir, startDir, trimmed)
 	if err != nil {
-		return fmt.Errorf("checking umbrella status: %w", err)
+		return false, "", err
 	}
-	if hasStagedChanges(umbrellaStatus) {
-		fmt.Fprintln(cmd.ErrOrStderr(), "committing umbrella repository...")
-		commitArgs := buildCommitArgs(message, noVerify)
-		if _, err := git.Run(dir, commitArgs...); err != nil {
-			return fmt.Errorf("committing umbrella repository: %w", err)
-		}
-		committed++
+	if rel == "." {
+		return true, "", nil
 	}
 
-	if committed == 0 {
-		fmt.Fprintln(cmd.ErrOrStderr(), "nothing to commit")
+	repoPath, _, _, matched := matchTrackedRepo(ws.Manifest.Repos, rel)
+	if matched {
+		return false, repoPath, nil
 	}
 
-	return nil
+	if commitArgSelectsRoot(ws.RootDir, rel, trimmed) {
+		return true, "", nil
+	}
+
+	return false, "", fmt.Errorf("'%s' is not a tracked repository or workspace path", arg)
+}
+
+func commitArgSelectsRoot(root, rel, arg string) bool {
+	if filepath.IsAbs(arg) || strings.ContainsAny(arg, `/\`) || strings.HasPrefix(arg, ".") {
+		return true
+	}
+	_, err := os.Stat(filepath.Join(root, filepath.FromSlash(rel)))
+	return err == nil
 }
 
 func init() {

@@ -46,7 +46,7 @@ in the ass. Why can't they just be bundled together from the start?!
 **Using `go install` (recommended, requires Go 1.26+):**
 
 ```sh
-go install github.com/refansa/gyat@latest
+go install github.com/refansa/gyat/v2@latest
 ```
 
 The binary will be placed in `$GOPATH/bin` — make sure that directory is on your `PATH`.

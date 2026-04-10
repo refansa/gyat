@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/refansa/gyat/internal/manifest"
+	"github.com/refansa/gyat/v2/internal/manifest"
 )
 
 func TestFindRootWalksUpwards(t *testing.T) {

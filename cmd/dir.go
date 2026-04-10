@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/refansa/gyat/internal/workspace"
+	"github.com/refansa/gyat/v2/internal/workspace"
 )
 
 // execDir returns the directory gyat should treat as the repository root.
@@ -24,7 +24,7 @@ func execDir() (string, error) {
 	if err == nil {
 		return dir, nil
 	}
-	if err != nil && !errors.Is(err, workspace.ErrNotFound) {
+	if !errors.Is(err, workspace.ErrNotFound) {
 		return "", err
 	}
 

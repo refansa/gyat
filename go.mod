@@ -1,4 +1,4 @@
-module github.com/refansa/gyat
+module github.com/refansa/gyat/v2
 
 go 1.26
 

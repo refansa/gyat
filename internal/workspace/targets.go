@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/refansa/gyat/internal/manifest"
+	"github.com/refansa/gyat/v2/internal/manifest"
 )
 
 // TargetOptions controls which workspace targets are selected.

@@ -6,7 +6,8 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/refansa/gyat/internal/git"
+	"github.com/refansa/gyat/v2/internal/git"
+	"github.com/refansa/gyat/v2/internal/workspace"
 	"github.com/spf13/cobra"
 )
 
@@ -20,29 +21,33 @@ var rmCmd = &cobra.Command{
 	Use:   "rm [path...]",
 	Short: "Remove files from the working tree and from the index",
 	Long: `Remove files from the working tree and from the index across the umbrella
-repository and any registered submodules.
+repository and tracked repos.
 
-Behaves like 'git rm' but is submodule-aware: paths that live inside a
-submodule are routed to that submodule, while all other paths are
+Behaves like 'git rm' but is workspace-aware: paths that live inside a
+tracked repo are routed to that repo, while all other paths are
 removed from the umbrella repository itself.`,
 	Example: `  # Remove a file from the umbrella repository
   gyat rm .gitignore
 
-  # Remove a file inside a submodule
+	# Remove a file inside a tracked repo
   gyat rm services/auth/handler.go
 
-  # Remove files recursively from a submodule
+	# Remove files recursively from a tracked repo
   gyat rm -r services/auth/models
 
-  # Remove files from the index only
+	# Remove files from the index only
   gyat rm --cached services/auth/README.md`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		startDir, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("get current directory: %w", err)
+		}
 		dir, err := execDir()
 		if err != nil {
 			return err
 		}
-		return runRm(dir, rmCached, rmForce, rmRecursive, cmd, args)
+		return runRmFrom(startDir, dir, rmCached, rmForce, rmRecursive, cmd, args)
 	},
 }
 
@@ -66,45 +71,58 @@ func buildRmArgs(cached, force, recursive bool, files []string) []string {
 // runRm removes files from the working tree and index. It routes each path to
 // the repository it belongs to.
 func runRm(dir string, cached, force, recursive bool, cmd *cobra.Command, args []string) error {
-	submodulePaths, err := allSubmodulePaths(dir)
+	return runRmFrom(dir, dir, cached, force, recursive, cmd, args)
+}
+
+func runRmFrom(startDir, dir string, cached, force, recursive bool, cmd *cobra.Command, args []string) error {
+	_ = dir
+	ws, err := workspace.Load(startDir)
 	if err != nil {
 		return err
 	}
 
-	rootArgs, subTargets := classifyArgs(submodulePaths, args)
+	rootArgs, repoTargets, err := classifyWorkspaceArgs(ws.RootDir, ws.Manifest.Repos, startDir, args)
+	if err != nil {
+		return err
+	}
 
 	if len(rootArgs) > 0 {
 		gitArgs := buildRmArgs(cached, force, recursive, rootArgs)
-		if _, err := git.Run(dir, gitArgs...); err != nil {
+		if _, err := git.Run(ws.RootDir, gitArgs...); err != nil {
 			return fmt.Errorf("removing root paths: %w", err)
 		}
 	}
 
-	// Sort submodules for deterministic output (useful for tests and UX).
-	var subs []string
-	for sub := range subTargets {
-		subs = append(subs, sub)
+	var repos []string
+	for repoPath := range repoTargets {
+		repos = append(repos, repoPath)
 	}
-	sort.Strings(subs)
+	sort.Strings(repos)
 
-	for _, sub := range subs {
-		stage := subTargets[sub]
-		subDir := filepath.Join(dir, sub)
+	for _, repoPath := range repos {
+		stage := repoTargets[repoPath]
+		repo, ok := workspaceRepoByPath(ws, repoPath)
+		if !ok {
+			return fmt.Errorf("tracked repository '%s' not found in manifest", repoPath)
+		}
+		repoDir := filepath.Join(ws.RootDir, filepath.FromSlash(repo.Path))
 
 		if stage.stageAll {
-			return fmt.Errorf("to remove submodule '%s', use 'gyat untrack %s'", sub, sub)
+			return fmt.Errorf("to remove tracked repository '%s', use 'gyat untrack %s'", repoPath, repoPath)
 		}
 
-		if _, err := os.Stat(subDir); os.IsNotExist(err) {
-			fmt.Fprintf(cmd.ErrOrStderr(), "warning: submodule '%s' is not checked out, skipping\n", sub)
+		if _, err := os.Stat(repoDir); os.IsNotExist(err) {
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: tracked repository '%s' is not cloned, skipping\n", repoPath)
 			continue
+		} else if err != nil {
+			return err
 		}
 
-		fmt.Fprintf(cmd.ErrOrStderr(), "removing in '%s'...\n", sub)
+		fmt.Fprintf(cmd.ErrOrStderr(), "removing in '%s'...\n", repoPath)
 
 		gitArgs := buildRmArgs(cached, force, recursive, stage.files)
-		if _, err := git.Run(subDir, gitArgs...); err != nil {
-			return fmt.Errorf("removing in '%s': %w", sub, err)
+		if _, err := git.Run(repoDir, gitArgs...); err != nil {
+			return fmt.Errorf("removing in '%s': %w", repoPath, err)
 		}
 	}
 

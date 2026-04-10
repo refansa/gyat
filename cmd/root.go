@@ -9,7 +9,7 @@ import (
 // Version is the current gyat version. It defaults to "dev" when built
 // without -ldflags; release builds inject it via:
 //
-//	go build -ldflags "-X github.com/refansa/gyat/cmd.Version=v0.2.0" .
+//	go build -ldflags "-X github.com/refansa/gyat/v2/cmd.Version=v0.2.0" .
 //
 // When installed via "go install module@version", the version is read
 // automatically from the embedded build info as a fallback.

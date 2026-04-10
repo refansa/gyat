@@ -1,16 +1,15 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
 
-	"github.com/refansa/gyat/internal/git"
-	"github.com/refansa/gyat/internal/manifest"
-	"github.com/refansa/gyat/internal/workspace"
+	"github.com/refansa/gyat/v2/internal/git"
+	"github.com/refansa/gyat/v2/internal/manifest"
+	"github.com/refansa/gyat/v2/internal/workspace"
 	"github.com/spf13/cobra"
 )
 
@@ -64,19 +63,13 @@ func isLocalPath(s string) bool {
 	return !strings.Contains(s, "://") && !strings.HasPrefix(s, "git@")
 }
 
-// runTrack registers a repository in a gyat workspace when .gyat is present.
-// Outside a gyat workspace it falls back to the legacy submodule behavior until
-// the remaining v1 commands are rewritten.
+// runTrack registers a repository in the current gyat workspace.
 func runTrack(dir, branch string, cmd *cobra.Command, args []string) error {
 	ws, err := workspace.Load(dir)
-	if err == nil {
-		return runTrackWorkspace(ws, dir, branch, cmd, args)
-	}
-	if !errors.Is(err, workspace.ErrNotFound) {
+	if err != nil {
 		return err
 	}
-
-	return runTrackLegacy(dir, branch, cmd, args)
+	return runTrackWorkspace(ws, dir, branch, cmd, args)
 }
 
 func runTrackWorkspace(ws workspace.Workspace, startDir, branch string, cmd *cobra.Command, args []string) error {
@@ -139,39 +132,6 @@ func runTrackWorkspace(ws workspace.Workspace, startDir, branch string, cmd *cob
 	fmt.Fprintf(cmd.ErrOrStderr(), "tracked repository '%s'\n", destination)
 	fmt.Fprintln(cmd.ErrOrStderr(), "hint: commit the changes to .gyat and .gitignore")
 	return nil
-}
-
-func runTrackLegacy(dir, branch string, cmd *cobra.Command, args []string) error {
-	source := args[0]
-
-	// Warn when an absolute local path is used — it will not work on other machines.
-	if filepath.IsAbs(source) {
-		if _, err := os.Stat(source); err == nil {
-			fmt.Fprintf(cmd.ErrOrStderr(), "warning: '%s' is an absolute path and will only work on this machine\n", source)
-			fmt.Fprintf(cmd.ErrOrStderr(), "hint: use a relative path (e.g. ../%s) for portability\n", filepath.Base(source))
-		}
-	}
-
-	// Git 2.38.1+ blocks local file transport by default (CVE-2022-39253).
-	// Prepend -c protocol.file.allow=always so local paths work transparently.
-	var gitArgs []string
-	if isLocalPath(source) {
-		gitArgs = []string{"-c", "protocol.file.allow=always", "submodule", "add"}
-	} else {
-		gitArgs = []string{"submodule", "add"}
-	}
-
-	if branch != "" {
-		gitArgs = append(gitArgs, "--branch", branch)
-	}
-
-	gitArgs = append(gitArgs, source)
-
-	if len(args) == 2 {
-		gitArgs = append(gitArgs, args[1])
-	}
-
-	return git.RunInteractive(dir, gitArgs...)
 }
 
 func resolveTrackSource(startDir, workspaceRoot, source string, cmd *cobra.Command) (cloneSource string, storedURL string, err error) {
