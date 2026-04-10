@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/refansa/gyat/internal/git"
+	"github.com/refansa/gyat/v2/internal/git"
 )
 
 // skipIfNoGit skips the test if git is not available in PATH.

@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -10,122 +9,128 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// ---------------------------------------------------------------------------
-// Integration tests — runRm
-// ---------------------------------------------------------------------------
-
-func TestRunRm_RootFile(t *testing.T) {
+func TestRunRm_WorkspaceRootFile(t *testing.T) {
 	t.Parallel()
 	skipIfNoGit(t)
 
-	dir := newUmbrellaRepo(t)
-
-	// Create and commit a file in the root
-	filePath := filepath.Join(dir, "root_file.txt")
+	umbrella, _ := setupTrackedWorkspaceRepo(t, "svc-rm-v2-root-file")
+	filePath := filepath.Join(umbrella, "root_file.txt")
 	writeFile(t, filePath, "content\n")
-	runGitIn(t, dir, "add", "root_file.txt")
-	runGitIn(t, dir, "commit", "-m", "add root_file")
+	runGitIn(t, umbrella, "add", "root_file.txt")
+	runGitIn(t, umbrella, "commit", "-m", "add root file")
 
 	cmd := &cobra.Command{}
 	cmd.SetErr(io.Discard)
 
-	// Remove it
-	if err := runRm(dir, false, false, false, cmd, []string{"root_file.txt"}); err != nil {
-		t.Fatalf("runRm: %v", err)
+	if err := runRm(umbrella, false, false, false, cmd, []string{"root_file.txt"}); err != nil {
+		t.Fatalf("runRm root file: %v", err)
 	}
 
-	// Verify file is gone from working tree
-	if _, err := os.Stat(filePath); !os.IsNotExist(err) {
-		t.Errorf("expected root_file.txt to be removed from disk, but it still exists")
-	}
-
-	// Verify file is removed from index
-	staged := runGitIn(t, dir, "diff", "--cached", "--name-only")
-	if !strings.Contains(staged, "root_file.txt") {
-		t.Errorf("expected root_file.txt to be staged for deletion\ngit diff --cached:\n%s", staged)
+	assertPathAbsent(t, filePath)
+	if staged := stagedFilesInDir(t, umbrella); !strings.Contains(staged, "root_file.txt") {
+		t.Fatalf("expected root_file.txt to be staged for deletion\ngit diff --cached:\n%s", staged)
 	}
 }
 
-func TestRunRm_FileInsideSubmodule(t *testing.T) {
+func TestRunRm_WorkspaceFileInsideRepo(t *testing.T) {
 	t.Parallel()
 	skipIfNoGit(t)
 
-	umbrella, subPath := setupTrackedSubmodule(t, "svc-rm-file")
-	subDir := filepath.Join(umbrella, subPath)
-
-	// Create and commit a file in the submodule
-	filePath := filepath.Join(subDir, "sub_file.txt")
+	umbrella, repoDir := setupTrackedWorkspaceRepo(t, "svc-rm-v2-repo-file")
+	filePath := filepath.Join(repoDir, "repo_file.txt")
 	writeFile(t, filePath, "content\n")
-	runGitIn(t, subDir, "add", "sub_file.txt")
-	runGitIn(t, subDir, "commit", "-m", "add sub_file")
+	runGitIn(t, repoDir, "add", "repo_file.txt")
+	runGitIn(t, repoDir, "commit", "-m", "add repo file")
 
 	cmd := &cobra.Command{}
 	cmd.SetErr(io.Discard)
 
-	// Remove it via umbrella route
-	if err := runRm(umbrella, false, false, false, cmd, []string{subPath + "/sub_file.txt"}); err != nil {
-		t.Fatalf("runRm: %v", err)
+	if err := runRm(umbrella, false, false, false, cmd, []string{"svc-rm-v2-repo-file/repo_file.txt"}); err != nil {
+		t.Fatalf("runRm repo file: %v", err)
 	}
 
-	// Verify file is gone from working tree
-	if _, err := os.Stat(filePath); !os.IsNotExist(err) {
-		t.Errorf("expected sub_file.txt to be removed from disk, but it still exists")
-	}
-
-	// Verify file is removed from index in the submodule
-	staged := runGitIn(t, subDir, "diff", "--cached", "--name-only")
-	if !strings.Contains(staged, "sub_file.txt") {
-		t.Errorf("expected sub_file.txt to be staged for deletion in submodule\ngit diff --cached:\n%s", staged)
+	assertPathAbsent(t, filePath)
+	if staged := stagedFilesInDir(t, repoDir); !strings.Contains(staged, "repo_file.txt") {
+		t.Fatalf("expected repo_file.txt to be staged for deletion\ngit diff --cached:\n%s", staged)
 	}
 }
 
-func TestRunRm_SubmoduleRoot_FailsWithHint(t *testing.T) {
+func TestRunRm_WorkspaceRepoRootFailsWithHint(t *testing.T) {
 	t.Parallel()
 	skipIfNoGit(t)
 
-	umbrella, subPath := setupTrackedSubmodule(t, "svc-rm-root")
+	umbrella, _ := setupTrackedWorkspaceRepo(t, "svc-rm-v2-root")
 
 	cmd := &cobra.Command{}
 	cmd.SetErr(io.Discard)
 
-	err := runRm(umbrella, false, false, false, cmd, []string{subPath})
+	err := runRm(umbrella, false, false, false, cmd, []string{"svc-rm-v2-root"})
 	if err == nil {
-		t.Fatal("expected runRm to fail when targeting submodule root directly")
+		t.Fatal("expected error when removing tracked repository root")
 	}
-
-	expectedMsg := "to remove submodule '" + subPath + "', use 'gyat untrack " + subPath + "'"
-	if !strings.Contains(err.Error(), expectedMsg) {
-		t.Errorf("expected error message to contain %q, got: %v", expectedMsg, err)
+	if !strings.Contains(err.Error(), "use 'gyat untrack svc-rm-v2-root'") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestRunRm_Cached(t *testing.T) {
+func TestRunRm_WithRepoFlagRemovesOnlySelectedRepo(t *testing.T) {
 	t.Parallel()
 	skipIfNoGit(t)
 
-	dir := newUmbrellaRepo(t)
-
-	filePath := filepath.Join(dir, "cached_file.txt")
-	writeFile(t, filePath, "content\n")
-	runGitIn(t, dir, "add", "cached_file.txt")
-	runGitIn(t, dir, "commit", "-m", "add cached_file")
+	umbrella, repoDirs := setupTrackedWorkspaceRepos(t, "svc-rm-v2-flag-a", "svc-rm-v2-flag-b")
+	for _, repoDir := range repoDirs {
+		filePath := filepath.Join(repoDir, "generated.txt")
+		writeFile(t, filePath, "content\n")
+		runGitIn(t, repoDir, "add", "generated.txt")
+		runGitIn(t, repoDir, "commit", "-m", "add generated file")
+	}
 
 	cmd := &cobra.Command{}
 	cmd.SetErr(io.Discard)
-
-	// Remove it with --cached
-	if err := runRm(dir, true, false, false, cmd, []string{"cached_file.txt"}); err != nil {
-		t.Fatalf("runRm: %v", err)
+	flags := workspaceTargetFlags{
+		repoSelectors: []string{"svc-rm-v2-flag-a"},
+		noRoot:        true,
+	}
+	if err := runRmWithFlagsFrom(umbrella, umbrella, flags, false, false, false, cmd, []string{"generated.txt"}); err != nil {
+		t.Fatalf("runRmWithFlagsFrom: %v", err)
 	}
 
-	// Verify file STILL exists on disk
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		t.Errorf("expected cached_file.txt to remain on disk, but it was deleted")
+	assertPathAbsent(t, filepath.Join(repoDirs["svc-rm-v2-flag-a"], "generated.txt"))
+	assertPathExists(t, filepath.Join(repoDirs["svc-rm-v2-flag-b"], "generated.txt"))
+	if staged := stagedFilesInDir(t, repoDirs["svc-rm-v2-flag-a"]); !strings.Contains(staged, "generated.txt") {
+		t.Fatalf("expected selected repo to stage generated.txt for deletion\ngit diff --cached:\n%s", staged)
+	}
+	if staged := stagedFilesInDir(t, repoDirs["svc-rm-v2-flag-b"]); staged != "" {
+		t.Fatalf("expected unselected repo to remain untouched, got: %q", staged)
+	}
+}
+
+func TestRunRm_WithParallelRemovesFilesAcrossRepos(t *testing.T) {
+	t.Parallel()
+	skipIfNoGit(t)
+
+	umbrella, repoDirs := setupTrackedWorkspaceRepos(t, "svc-rm-v2-parallel-a", "svc-rm-v2-parallel-b")
+	for _, repoDir := range repoDirs {
+		filePath := filepath.Join(repoDir, "generated.txt")
+		writeFile(t, filePath, "content\n")
+		runGitIn(t, repoDir, "add", "generated.txt")
+		runGitIn(t, repoDir, "commit", "-m", "add generated file")
 	}
 
-	// Verify file is removed from index
-	staged := runGitIn(t, dir, "diff", "--cached", "--name-only")
-	if !strings.Contains(staged, "cached_file.txt") {
-		t.Errorf("expected cached_file.txt to be staged for deletion\ngit diff --cached:\n%s", staged)
+	cmd := &cobra.Command{}
+	cmd.SetErr(io.Discard)
+	args := []string{
+		"svc-rm-v2-parallel-a/generated.txt",
+		"svc-rm-v2-parallel-b/generated.txt",
+	}
+	if err := runRmWithFlagsFrom(umbrella, umbrella, workspaceTargetFlags{parallel: true}, false, false, false, cmd, args); err != nil {
+		t.Fatalf("runRmWithFlagsFrom: %v", err)
+	}
+
+	for _, repoName := range []string{"svc-rm-v2-parallel-a", "svc-rm-v2-parallel-b"} {
+		assertPathAbsent(t, filepath.Join(repoDirs[repoName], "generated.txt"))
+		if staged := stagedFilesInDir(t, repoDirs[repoName]); !strings.Contains(staged, "generated.txt") {
+			t.Fatalf("expected %s to stage generated.txt for deletion\ngit diff --cached:\n%s", repoName, staged)
+		}
 	}
 }

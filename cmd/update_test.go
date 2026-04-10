@@ -1,119 +1,93 @@
 package cmd
 
 import (
+	"bytes"
+	"io"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
 )
 
-// TestRunUpdate_NoSubmodules verifies that running update in a repo with no
-// submodules exits cleanly without an error. git submodule update is a no-op
-// when there is nothing to update.
-func TestRunUpdate_NoSubmodules(t *testing.T) {
+func TestRunUpdate_WorkspacePullsManifestBranch(t *testing.T) {
 	t.Parallel()
 	skipIfNoGit(t)
 
-	dir := newUmbrellaRepo(t)
+	umbrella, source := newTestSetup(t, "svc-update-v2-branch")
+	runGitIn(t, source, "branch", "-m", "main")
 
-	err := runUpdate(dir, &cobra.Command{}, nil)
-	if err != nil {
-		t.Fatalf("runUpdate on a repo with no submodules: %v", err)
-	}
-}
-
-// TestRunUpdate_AllSubmodules verifies that update runs successfully when at
-// least one submodule is present and no specific path is given (update all).
-func TestRunUpdate_AllSubmodules(t *testing.T) {
-	t.Parallel()
-	skipIfNoGit(t)
-
-	umbrella, source := newTestSetup(t, "service-update")
-
-	rel := relPath(umbrella, source)
-	ac := &cobra.Command{}
-	if err := runTrack(umbrella, "", ac, []string{rel}); err != nil {
-		t.Fatalf("setup: runTrack: %v", err)
+	initCmd := &cobra.Command{}
+	initCmd.SetErr(io.Discard)
+	if err := runInit(umbrella, initCmd, nil); err != nil {
+		t.Fatalf("runInit: %v", err)
 	}
 
-	// The submodule is already at the latest commit, so update is a no-op —
-	// but it must still exit cleanly.
-	err := runUpdate(umbrella, &cobra.Command{}, nil)
-	if err != nil {
-		t.Fatalf("runUpdate (all): %v", err)
+	trackCmd := &cobra.Command{}
+	trackCmd.SetErr(io.Discard)
+	if err := runTrack(umbrella, "main", trackCmd, []string{relPath(umbrella, source)}); err != nil {
+		t.Fatalf("runTrack: %v", err)
 	}
-}
+	commitWorkspaceMetadata(t, umbrella)
 
-// TestRunUpdate_SpecificPath verifies that passing a submodule path restricts
-// the update to only that submodule.
-func TestRunUpdate_SpecificPath(t *testing.T) {
-	t.Parallel()
-	skipIfNoGit(t)
+	repoDir := filepath.Join(umbrella, "svc-update-v2-branch")
+	headBefore := runGitIn(t, repoDir, "rev-parse", "HEAD")
 
-	umbrella, source := newTestSetup(t, "service-specific")
-
-	rel := relPath(umbrella, source)
-	ac := &cobra.Command{}
-	if err := runTrack(umbrella, "", ac, []string{rel}); err != nil {
-		t.Fatalf("setup: runTrack: %v", err)
-	}
-
-	subName := filepath.Base(source)
-	err := runUpdate(umbrella, &cobra.Command{}, []string{subName})
-	if err != nil {
-		t.Fatalf("runUpdate (specific path %q): %v", subName, err)
-	}
-}
-
-// TestRunUpdate_NewCommitIsPickedUp verifies the core purpose of the update
-// command: when the source repo has a new commit, runUpdate checks it out.
-func TestRunUpdate_NewCommitIsPickedUp(t *testing.T) {
-	t.Parallel()
-	skipIfNoGit(t)
-
-	umbrella, source := newTestSetup(t, "service-ahead")
-
-	rel := relPath(umbrella, source)
-	ac := &cobra.Command{}
-	if err := runTrack(umbrella, "", ac, []string{rel}); err != nil {
-		t.Fatalf("setup: runTrack: %v", err)
-	}
-
-	subName := filepath.Base(source)
-
-	// Record the SHA the submodule currently points to.
-	before := runGitIn(t, filepath.Join(umbrella, subName), "rev-parse", "HEAD")
-
-	// Push a new commit to the source repo.
-	writeFile(t, filepath.Join(source, "newfile.txt"), "hello from new commit\n")
+	writeFile(t, filepath.Join(source, "new_feature.go"), "package main\n// updated\n")
 	runGitIn(t, source, "add", ".")
 	runGitIn(t, source, "commit", "-m", "second commit")
 
-	// Run update — it should pull the new commit in.
-	if err := runUpdate(umbrella, &cobra.Command{}, nil); err != nil {
-		t.Fatalf("runUpdate after new commit: %v", err)
+	cmd := &cobra.Command{}
+	cmd.SetErr(io.Discard)
+
+	if err := runUpdate(umbrella, cmd, nil); err != nil {
+		t.Fatalf("runUpdate: %v", err)
 	}
 
-	after := runGitIn(t, filepath.Join(umbrella, subName), "rev-parse", "HEAD")
-
-	if before == after {
-		t.Errorf(
-			"expected submodule HEAD to change after update, but it stayed at %s",
-			before,
-		)
+	headAfter := runGitIn(t, repoDir, "rev-parse", "HEAD")
+	if headBefore == headAfter {
+		t.Fatalf("expected tracked repo HEAD to change after update, stayed at %s", headBefore)
 	}
+	assertPathExists(t, filepath.Join(repoDir, "new_feature.go"))
 }
 
-// TestRunUpdate_InvalidPath verifies that passing a path that is not a known
-// submodule results in an error.
-func TestRunUpdate_InvalidPath(t *testing.T) {
+func TestRunUpdate_WorkspaceSkipsMissingRepo(t *testing.T) {
 	t.Parallel()
 	skipIfNoGit(t)
 
-	dir := newUmbrellaRepo(t)
+	umbrella, repoDir := setupTrackedWorkspaceRepo(t, "svc-update-v2-missing")
+	if err := os.RemoveAll(repoDir); err != nil {
+		t.Fatalf("RemoveAll: %v", err)
+	}
 
-	err := runUpdate(dir, &cobra.Command{}, []string{"does-not-exist"})
+	var stderrBuf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetErr(&stderrBuf)
+
+	if err := runUpdate(umbrella, cmd, nil); err != nil {
+		t.Fatalf("runUpdate: %v", err)
+	}
+
+	if !strings.Contains(stderrBuf.String(), "not cloned") {
+		t.Fatalf("expected not-cloned warning, got:\n%s", stderrBuf.String())
+	}
+}
+
+func TestRunUpdate_WorkspaceInvalidSelector(t *testing.T) {
+	t.Parallel()
+	skipIfNoGit(t)
+
+	umbrella, _ := setupTrackedWorkspaceRepo(t, "svc-update-v2-invalid")
+
+	cmd := &cobra.Command{}
+	cmd.SetErr(io.Discard)
+
+	err := runUpdate(umbrella, cmd, []string{"ghost-repo"})
 	if err == nil {
-		t.Error("expected an error when updating a non-existent submodule path, got nil")
+		t.Fatal("expected error for invalid workspace selector")
+	}
+	if !strings.Contains(err.Error(), "not a tracked repository") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

@@ -4,39 +4,49 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"unicode/utf8"
 
-	"github.com/refansa/gyat/internal/git"
+	"github.com/refansa/gyat/v2/internal/git"
+	"github.com/refansa/gyat/v2/internal/workspace"
 	"github.com/spf13/cobra"
 )
 
 var statusCmd = &cobra.Command{
 	Use:   "status [path...]",
-	Short: "Show working tree status across the umbrella repository and submodules",
-	Long: `Show the working tree status of the umbrella repository and all of its
-submodules.
+	Short: "Show working tree status across the umbrella repository and tracked repos",
+	Long: `Show the working tree status of the umbrella repository and tracked repos
+in the current gyat workspace.
 
 For each repository a section is printed that mirrors 'git status': staged
 changes, unstaged changes, and untracked files are listed under clearly
-labelled headings. Submodules that have not been initialised on disk are
-flagged with "not initialized".
+labelled headings. Repositories listed in .gyat but missing on disk are flagged
+with "not cloned".
 
-Without arguments every registered submodule is shown alongside the
-umbrella repository. Pass one or more submodule paths to limit the output
-to those submodules (the umbrella is always shown).`,
+Without selector flags, status shows the umbrella repository followed by every
+tracked repo. Use positional repo names or paths, '--repo', and '--group' to
+narrow the repo set, '--no-root' to exclude the umbrella repository, or
+'--root-only' to inspect only the umbrella root.`,
 	Example: `  # Show status for all repositories
   gyat status
 
-  # Show status for specific submodules (plus the umbrella)
-  gyat status services/auth services/billing`,
+	# Show status for specific repos while keeping the umbrella
+	gyat status services/auth services/billing
+
+	# Show status for one repo without the umbrella
+	gyat status --repo auth --no-root
+
+	# Show only the umbrella repository
+	gyat status --root-only
+
+  # Show status for a repo selected by name
+  gyat status auth`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		dir, err := execDir()
+		dir, err := os.Getwd()
 		if err != nil {
-			return err
+			return fmt.Errorf("get current directory: %w", err)
 		}
-		return runStatus(dir, cmd, args)
+		return runStatusWithFlags(dir, sharedTargetFlags, cmd, args)
 	},
 }
 
@@ -54,6 +64,16 @@ type repoStatus struct {
 	staged    []statusEntry
 	unstaged  []statusEntry
 	untracked []statusEntry
+}
+
+type statusTargetResult struct {
+	label       string
+	unavailable string
+	status      repoStatus
+}
+
+func init() {
+	bindWorkspaceParallelFlag(statusCmd)
 }
 
 // parsePorcelain parses the output of "git status --porcelain" into a slice of
@@ -142,7 +162,7 @@ func collectRepoStatus(dir string) (repoStatus, error) {
 
 // printRepoSection writes one repository's status block to out.
 // label is the human-friendly name shown in the section header (e.g.
-// "umbrella repository" or a submodule path like "services/auth").
+// "umbrella repository" or a tracked repo path like "services/auth").
 func printRepoSection(out io.Writer, label string, rs repoStatus) {
 	header := fmt.Sprintf("%s — %s", label, rs.branch)
 	sep := strings.Repeat("─", utf8.RuneCountInString(header))
@@ -180,61 +200,86 @@ func printRepoSection(out io.Writer, label string, rs repoStatus) {
 	}
 }
 
-// printNotInitialized writes a "not initialized" status block to out for a
-// submodule whose working-tree directory does not exist on disk.
-func printNotInitialized(out io.Writer, path string) {
-	header := fmt.Sprintf("%s — (not initialized)", path)
+// printUnavailableRepo writes a status block to out for a tracked repository
+// whose working-tree directory is not available on disk.
+func printUnavailableRepo(out io.Writer, path, status string) {
+	header := fmt.Sprintf("%s — (%s)", path, status)
 	sep := strings.Repeat("─", utf8.RuneCountInString(header))
 	fmt.Fprintln(out, header)
 	fmt.Fprintln(out, sep)
-	fmt.Fprintln(out, "not initialized")
+	fmt.Fprintln(out, status)
 	fmt.Fprintln(out)
 }
 
-// runStatus prints a status report for the umbrella repository and its
-// submodules. When args is non-empty only the specified submodule paths are
-// included alongside the umbrella, which is always shown first.
 func runStatus(dir string, cmd *cobra.Command, args []string) error {
+	return runStatusWithFlags(dir, workspaceTargetFlags{}, cmd, args)
+}
+
+func runStatusWithFlags(dir string, flags workspaceTargetFlags, cmd *cobra.Command, args []string) error {
+	ws, err := workspace.Load(dir)
+	if err != nil {
+		return err
+	}
+	return runStatusWorkspace(ws, flags, cmd, args)
+}
+
+// runStatusWorkspace prints a status report for the selected workspace targets.
+// Positional args are treated as repo selectors (name or path) and are
+// combined with the shared target flags.
+func runStatusWorkspace(ws workspace.Workspace, flags workspaceTargetFlags, cmd *cobra.Command, args []string) error {
 	stdout := cmd.OutOrStdout()
 	errout := cmd.ErrOrStderr()
+	var failures commandFailures
 
-	submodulePaths, err := allSubmodulePaths(dir)
+	targets, err := ws.ResolveTargets(flags.targetOptions(true, args))
 	if err != nil {
 		return err
 	}
 
-	// Always show the umbrella repository first.
-	umbrellaStatus, err := collectRepoStatus(dir)
-	if err != nil {
-		return fmt.Errorf("umbrella repository: %w", err)
-	}
-	printRepoSection(stdout, "umbrella repository", umbrellaStatus)
-
-	if len(submodulePaths) == 0 {
-		fmt.Fprintln(errout, "hint: use 'gyat track <repo>' to add a repository")
-		return nil
-	}
-
-	// Resolve which submodule paths to report on.
-	targets, err := resolveTargetPaths(submodulePaths, args)
-	if err != nil {
-		return err
-	}
-
-	for _, path := range targets {
-		subDir := filepath.Join(dir, path)
-		if _, statErr := os.Stat(subDir); os.IsNotExist(statErr) {
-			printNotInitialized(stdout, path)
-			continue
+	results, err := workspace.RunTargets(targets, flags.runOptions(), func(target workspace.Target) (statusTargetResult, error) {
+		label := target.Path
+		if target.IsRoot {
+			label = "umbrella repository"
+		} else if _, statErr := os.Stat(target.Dir); os.IsNotExist(statErr) {
+			return statusTargetResult{label: target.Path, unavailable: "not cloned"}, nil
+		} else if statErr != nil {
+			return statusTargetResult{label: label}, fmt.Errorf("stat '%s': %w", target.Label, statErr)
 		}
 
-		rs, err := collectRepoStatus(subDir)
+		rs, err := collectRepoStatus(target.Dir)
 		if err != nil {
-			fmt.Fprintf(errout, "warning: could not get status of '%s': %v\n", path, err)
-			continue
+			return statusTargetResult{label: label}, fmt.Errorf("could not get status of '%s': %w", target.Label, err)
 		}
-		printRepoSection(stdout, path, rs)
+
+		return statusTargetResult{label: label, status: rs}, nil
+	})
+	if err != nil {
+		return err
 	}
 
-	return nil
+	for _, result := range results {
+		if !result.Ran {
+			continue
+		}
+		if result.Err != nil {
+			if handledErr := failures.handleErr(flags.continueOnError, result.Err); handledErr != nil {
+				return handledErr
+			}
+			fmt.Fprintf(errout, "warning: %v\n", result.Err)
+			continue
+		}
+
+		if result.Value.unavailable != "" {
+			printUnavailableRepo(stdout, result.Value.label, result.Value.unavailable)
+			continue
+		}
+
+		printRepoSection(stdout, result.Value.label, result.Value.status)
+	}
+
+	if len(ws.Manifest.Repos) == 0 && !flags.rootOnly && !flags.noRoot {
+		fmt.Fprintln(errout, "hint: use 'gyat track <repo>' to add a repository")
+	}
+
+	return failures.err("status failed")
 }

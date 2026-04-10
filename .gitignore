@@ -39,6 +39,7 @@ go.work
 .idea/
 *.sublime-workspace
 *.sublime-project
+*.code-workspace
 
 # Swap/temporary files from editors
 *~
@@ -95,6 +96,9 @@ coverage/
 bin/
 
 # Miscellaneous
+temp/
+tmp/
+
 # IDE-specific metadata created by JetBrains Rider for Go, etc.
 .idea/
 *.iml

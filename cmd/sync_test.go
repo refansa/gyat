@@ -1,122 +1,123 @@
 package cmd
 
 import (
+	"bytes"
 	"io"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
 )
 
-// TestRunSync_EmptyRepo verifies that syncing in a repo with no submodules
-// exits cleanly — both git submodule sync and git submodule update are
-// no-ops when there is nothing to act on.
-func TestRunSync_EmptyRepo(t *testing.T) {
+func TestRunSync_WorkspaceClonesMissingRepo(t *testing.T) {
 	t.Parallel()
 	skipIfNoGit(t)
 
-	dir := newUmbrellaRepo(t)
-	sc := &cobra.Command{}
-	sc.SetErr(io.Discard)
-
-	if err := runSync(dir, sc, nil); err != nil {
-		t.Fatalf("runSync in empty repo: %v", err)
-	}
-}
-
-// TestRunSync_WithSubmodule verifies that sync succeeds when at least one
-// submodule is registered, leaving the submodule directory intact.
-func TestRunSync_WithSubmodule(t *testing.T) {
-	t.Parallel()
-	skipIfNoGit(t)
-
-	umbrella, source := newTestSetup(t, "svc-sync")
-
-	ac := &cobra.Command{}
-	ac.SetErr(io.Discard)
-	rel := relPath(umbrella, source)
-	if err := runTrack(umbrella, "", ac, []string{rel}); err != nil {
-		t.Fatalf("setup: runTrack: %v", err)
+	umbrella, repoDir := setupTrackedWorkspaceRepo(t, "svc-sync-v2-clone")
+	if err := os.RemoveAll(repoDir); err != nil {
+		t.Fatalf("RemoveAll: %v", err)
 	}
 
-	sc := &cobra.Command{}
-	sc.SetErr(io.Discard)
-	if err := runSync(umbrella, sc, nil); err != nil {
-		t.Fatalf("runSync with submodule: %v", err)
-	}
+	var stderrBuf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetErr(&stderrBuf)
 
-	// The submodule directory must still be present after a sync.
-	assertPathExists(t, filepath.Join(umbrella, filepath.Base(source)))
-}
-
-// TestRunSync_OutsideGitRepo verifies that running sync outside any git
-// repository returns an error rather than silently succeeding.
-func TestRunSync_OutsideGitRepo(t *testing.T) {
-	t.Parallel()
-	skipIfNoGit(t)
-
-	dir := t.TempDir()
-	sc := &cobra.Command{}
-	sc.SetErr(io.Discard)
-
-	if err := runSync(dir, sc, nil); err == nil {
-		t.Fatal("expected error when running sync outside a git repo, got nil")
-	}
-}
-
-// TestRunSync_GitmodulesURLIsPreserved verifies that after a sync the URL
-// recorded in .gitmodules has not been corrupted or removed.
-func TestRunSync_GitmodulesURLIsPreserved(t *testing.T) {
-	t.Parallel()
-	skipIfNoGit(t)
-
-	umbrella, source := newTestSetup(t, "svc-url-check")
-
-	ac := &cobra.Command{}
-	ac.SetErr(io.Discard)
-	rel := relPath(umbrella, source)
-	if err := runTrack(umbrella, "", ac, []string{rel}); err != nil {
-		t.Fatalf("setup: runTrack: %v", err)
-	}
-
-	sc := &cobra.Command{}
-	sc.SetErr(io.Discard)
-	if err := runSync(umbrella, sc, nil); err != nil {
+	if err := runSync(umbrella, cmd, nil); err != nil {
 		t.Fatalf("runSync: %v", err)
 	}
 
-	// .gitmodules must still contain a URL entry for the submodule.
-	assertFileContains(t, filepath.Join(umbrella, ".gitmodules"), "url")
+	assertPathExists(t, repoDir)
+	assertPathExists(t, filepath.Join(repoDir, "main.go"))
+	if !strings.Contains(stderrBuf.String(), "cloning 'svc-sync-v2-clone'") {
+		t.Fatalf("expected clone message, got:\n%s", stderrBuf.String())
+	}
 }
 
-// TestRunSync_MultipleSubmodules verifies that sync handles more than one
-// submodule without error.
-func TestRunSync_MultipleSubmodules(t *testing.T) {
+func TestRunSync_WorkspaceResetsOriginURL(t *testing.T) {
 	t.Parallel()
 	skipIfNoGit(t)
 
-	umbrella, srcA := newTestSetup(t, "svc-alpha")
-	srcB := newSourceRepo(t)
+	umbrella, source := newTestSetup(t, "svc-sync-v2-remote")
 
-	ac := &cobra.Command{}
-	ac.SetErr(io.Discard)
-
-	relA := relPath(umbrella, srcA)
-	if err := runTrack(umbrella, "", ac, []string{relA, "services/alpha"}); err != nil {
-		t.Fatalf("setup: track first submodule: %v", err)
+	initCmd := &cobra.Command{}
+	initCmd.SetErr(io.Discard)
+	if err := runInit(umbrella, initCmd, nil); err != nil {
+		t.Fatalf("runInit: %v", err)
 	}
 
-	relB := relPath(umbrella, srcB)
-	if err := runTrack(umbrella, "", ac, []string{relB, "services/beta"}); err != nil {
-		t.Fatalf("setup: track second submodule: %v", err)
+	trackCmd := &cobra.Command{}
+	trackCmd.SetErr(io.Discard)
+	if err := runTrack(umbrella, "", trackCmd, []string{relPath(umbrella, source)}); err != nil {
+		t.Fatalf("runTrack: %v", err)
+	}
+	commitWorkspaceMetadata(t, umbrella)
+
+	repoDir := filepath.Join(umbrella, "svc-sync-v2-remote")
+	bogusRemote := filepath.Join(filepath.Dir(umbrella), "bogus-remote")
+	runGitIn(t, repoDir, "remote", "set-url", "origin", bogusRemote)
+
+	cmd := &cobra.Command{}
+	cmd.SetErr(io.Discard)
+
+	if err := runSync(umbrella, cmd, nil); err != nil {
+		t.Fatalf("runSync: %v", err)
 	}
 
-	sc := &cobra.Command{}
-	sc.SetErr(io.Discard)
-	if err := runSync(umbrella, sc, nil); err != nil {
-		t.Fatalf("runSync with multiple submodules: %v", err)
+	remoteURL := runGitIn(t, repoDir, "config", "--get", "remote.origin.url")
+	same, err := samePath(remoteURL, source)
+	if err != nil {
+		t.Fatalf("samePath: %v", err)
+	}
+	if !same {
+		t.Fatalf("expected origin URL %q, got %q", source, remoteURL)
+	}
+}
+
+func TestRunSync_WorkspaceInvalidSelector(t *testing.T) {
+	t.Parallel()
+	skipIfNoGit(t)
+
+	umbrella, _ := setupTrackedWorkspaceRepo(t, "svc-sync-v2-invalid")
+
+	cmd := &cobra.Command{}
+	cmd.SetErr(io.Discard)
+
+	err := runSync(umbrella, cmd, []string{"ghost-repo"})
+	if err == nil {
+		t.Fatal("expected error for invalid workspace selector")
+	}
+	if !strings.Contains(err.Error(), "not a tracked repository") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRunSync_WithParallelClonesReposInOrder(t *testing.T) {
+	t.Parallel()
+	skipIfNoGit(t)
+
+	umbrella, repoDirs := setupTrackedWorkspaceRepos(t, "svc-sync-v2-parallel-a", "svc-sync-v2-parallel-b")
+	for _, repoDir := range repoDirs {
+		if err := os.RemoveAll(repoDir); err != nil {
+			t.Fatalf("RemoveAll: %v", err)
+		}
 	}
 
-	assertPathExists(t, filepath.Join(umbrella, "services/alpha"))
-	assertPathExists(t, filepath.Join(umbrella, "services/beta"))
+	var stderrBuf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetErr(&stderrBuf)
+
+	if err := runSyncWithFlagsFrom(umbrella, umbrella, workspaceTargetFlags{parallel: true}, cmd, nil); err != nil {
+		t.Fatalf("runSyncWithFlagsFrom: %v", err)
+	}
+
+	assertPathExists(t, repoDirs["svc-sync-v2-parallel-a"])
+	assertPathExists(t, repoDirs["svc-sync-v2-parallel-b"])
+	errOut := stderrBuf.String()
+	first := strings.Index(errOut, "cloning 'svc-sync-v2-parallel-a'")
+	second := strings.Index(errOut, "cloning 'svc-sync-v2-parallel-b'")
+	if first == -1 || second == -1 || first > second {
+		t.Fatalf("expected ordered clone messages, got:\n%s", errOut)
+	}
 }

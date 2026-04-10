@@ -1,9 +1,12 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/refansa/gyat/v2/internal/workspace"
 )
 
 // execDir returns the directory gyat should treat as the repository root.
@@ -17,6 +20,18 @@ import (
 // fall back to the caller's current working directory instead — matching the
 // behaviour of plain git.
 func execDir() (string, error) {
+	dir, err := workspace.FindRoot("")
+	if err == nil {
+		return dir, nil
+	}
+	if !errors.Is(err, workspace.ErrNotFound) {
+		return "", err
+	}
+
+	return legacyExecDir()
+}
+
+func legacyExecDir() (string, error) {
 	exe, err := os.Executable()
 	if err != nil {
 		return "", fmt.Errorf("getting executable path: %w", err)

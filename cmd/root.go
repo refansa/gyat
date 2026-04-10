@@ -9,19 +9,22 @@ import (
 // Version is the current gyat version. It defaults to "dev" when built
 // without -ldflags; release builds inject it via:
 //
-//	go build -ldflags "-X github.com/refansa/gyat/cmd.Version=v0.2.0" .
+//	go build -ldflags "-X github.com/refansa/gyat/v2/cmd.Version=v0.2.0" .
 //
 // When installed via "go install module@version", the version is read
 // automatically from the embedded build info as a fallback.
 var Version = "dev"
 
 var rootCmd = &cobra.Command{
-	Use:     "gyat",
-	Short:   "Git Your Ass Together — a git submodule manager",
-	Version: Version,
-	Long: `gyat is a git submodule manager that aggregates multiple related
-repositories under one umbrella repository, making them easy to manage
-without wrestling with raw git submodule commands.`,
+	Use:           "gyat",
+	Short:         "Git Your Ass Together — an umbrella workspace manager",
+	Version:       Version,
+	SilenceUsage:  true,
+	SilenceErrors: true,
+	Long: `gyat is an umbrella workspace manager for multi-repository projects.
+
+It helps you organize related repositories under one root workspace so they can
+be managed together without stressing on the chaos that you've created.`,
 }
 
 func Execute() error {
@@ -37,16 +40,6 @@ func init() {
 		}
 	}
 	rootCmd.Version = Version
-	rootCmd.AddCommand(initCmd)
-	rootCmd.AddCommand(trackCmd)
-	rootCmd.AddCommand(addCmd)
-	rootCmd.AddCommand(untrackCmd)
-	rootCmd.AddCommand(updateCmd)
-	rootCmd.AddCommand(listCmd)
-	rootCmd.AddCommand(commitCmd)
-	rootCmd.AddCommand(syncCmd)
-	rootCmd.AddCommand(pullCmd)
-	rootCmd.AddCommand(pushCmd)
-	rootCmd.AddCommand(rmCmd)
-	rootCmd.AddCommand(statusCmd)
+	bindWorkspaceTargetFlags(rootCmd)
+	registerBuiltins(rootCmd)
 }

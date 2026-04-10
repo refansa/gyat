@@ -1,57 +1,55 @@
 # gyat - Git Your Ass Together
 
-A git submodule manager that aggregates all of your related repositories into one
-single umbrella repository, making them easy to manage without wrestling with raw
-`git submodule` commands.
+gyat is an umbrella workspace manager for multi-repository projects. It keeps a
+normal git repository at the root, tracks child repositories in a `.gyat`
+manifest, and lets you run common git workflows across the workspace without
+turning those child repositories into submodules.
 
 ## Why?
 
-Sometimes what's sold as "microservices" is really just a **distributed monolith** —
-10+ repos that are tightly coupled, deployed together, and should have been a single
-repository from the start.
+Sometimes what gets called "microservices" is really a distributed monolith:
+10+ repositories that are tightly coupled, deployed together, and changed
+together.
 
 If that sounds familiar, `gyat` is for you.
 
-Managing a constellation of tightly-coupled repos means:
+Managing that kind of repo sprawl usually means:
 
-- Jumping between repos just to make one feature work
-- Keeping versions in sync manually
-- PRs scattered across multiple repos for a single logical change
-- Onboarding new devs is a nightmare
+- Jumping between repositories just to finish one feature
+- Keeping branches and changes in sync manually
+- Opening a pile of PRs for one logical change
+- Onboarding people into a workspace that only exists in tribal knowledge
 
-`gyat` gives you a single umbrella repository that holds all of these repos as
-submodules, with a simple CLI to manage them — without wrestling with raw git
-submodule commands.
+`gyat` gives you one workspace root, one manifest, and one CLI for operating
+across the whole set.
 
 ### I meant, what with the funny name?
 
-Ah, of course — that's the most important bit. Initially I considered naming 
-the project "Yet Another Git Tracker" (yagt), but it didn't roll well off 
-the tongue and felt a bit awkward to type as a command. Upon closer inspection
-of the abbreviation, I rearranged it into the joking little name "gyat" 
-(dropping the second 't'). I immediately came up with the project's full name, 
-"Git Your Ass Together," because I always thought these repositories are a big pain 
-in the ass. Why can't they just be bundled together from the start?!
-
+That is obviously the most important bit. Initially I considered naming the
+project "Yet Another Git Tracker" (`yagt`), but it felt awkward to type and say.
+Rearranging the abbreviation into `gyat` was funnier, shorter, and more honest:
+these repositories usually need to get their act together.
 
 ## Goals
 
-- **Aggregate** multiple repositories under one roof
-- **Simplify** common submodule operations (track, add, commit, remove, update, sync, list)
-- **Stay out of the way** — it is a thin layer on top of git, not a replacement
-- **Make it easy** to add or remove repositories as the project evolves
+- Aggregate multiple related repositories under one workspace
+- Keep each child repository a normal git repository
+- Simplify common multi-repo workflows like `track`, `exec`, `add`, `commit`, `pull`, `push`, `update`, `sync`, and `list`
+- Stay thin on top of git rather than replacing it
+- Make target selection predictable with repo, group, and root selectors
 
 ## Installation
 
-**Using `go install` (recommended, requires Go 1.26+):**
+Using `go install` (recommended, requires Go 1.26+):
 
 ```sh
-go install github.com/refansa/gyat@latest
+go install github.com/refansa/gyat/v2@latest
 ```
 
-The binary will be placed in `$GOPATH/bin` — make sure that directory is on your `PATH`.
+The binary will be placed in `$GOPATH/bin`, so make sure that directory is on
+your `PATH`.
 
-**From source (requires Go 1.26+):**
+From source (requires Go 1.26+):
 
 ```sh
 git clone https://github.com/refansa/gyat
@@ -69,28 +67,79 @@ mv gyat /usr/local/bin/
 Move-Item gyat.exe C:\Windows\System32\gyat.exe
 ```
 
-**Verify:**
+Verify the install:
 
 ```sh
 gyat --help
 ```
 
+## Workspace model
+
+Every gyat workspace has a `.gyat` manifest at the umbrella root:
+
+```json
+{
+	"version": 1,
+	"ignore": [
+		"node_modules",
+		".vscode"
+	],
+	"repos": [
+		{
+			"name": "auth",
+			"path": "services/auth",
+			"url": "git@github.com:org/service-auth.git",
+			"branch": "main",
+			"groups": ["backend"]
+		}
+	]
+}
+```
+
+The model is simple:
+
+- The umbrella root stays a normal git repository.
+- Each tracked child repository stays a normal git repository cloned inside the workspace.
+- `.gyat` is the source of truth for tracked repository paths, remotes, branches, and groups.
+- The root `.gitignore` gets a gyat-managed block for tracked repo paths and manifest ignore patterns.
+
+## Common target flags
+
+Most workspace-aware commands share the same target selection flags:
+
+| Flag | Meaning |
+|------|---------|
+| `--repo <name-or-path>` | Select one or more tracked repos by name or manifest path |
+| `--group <group>` | Select repos whose `.gyat` entry contains that group |
+| `--no-root` | Exclude the umbrella repository |
+| `--root-only` | Target only the umbrella repository |
+| `--continue-on-error` | Keep going across the remaining targets after a failure |
+
+These flags are used by commands such as `exec`, `status`, `list`, `add`,
+`commit`, `pull`, `push`, `update`, `sync`, `rm`, and `untrack`. Commands keep
+their own default root behavior: for example, `status`, `pull`, `push`, `sync`,
+and `exec` include the umbrella root by default, while `list` and `update` do
+not. `init` and `track` reject these flags, and `untrack` does not support
+`--root-only`.
+
 ## Usage
 
 ### `gyat init`
 
-Initialize a new gyat-managed repository in the current directory, or reinitialize
-an existing one. If a `.gitmodules` file is already present (e.g. after cloning an
-existing gyat-managed repo), all submodules will be initialized and checked out
-automatically.
+Initialize a gyat workspace in the current directory, or validate and
+reinitialize an existing one.
 
 ```sh
 gyat init
 ```
 
+This creates `.gyat` if it does not exist, initializes the root git repository
+if needed, and reconciles the gyat-managed `.gitignore` block. Nested gyat
+workspaces are rejected.
+
 ### `gyat track`
 
-Register a repository as a submodule. Accepts both remote URLs and local paths.
+Clone and register a repository in the current workspace.
 
 ```sh
 # Remote URL
@@ -100,185 +149,225 @@ gyat track https://github.com/org/service-auth services/auth
 # Track a specific branch
 gyat track --branch main https://github.com/org/service-auth services/auth
 
-# Local path (relative — portable across machines)
+# Local path (relative paths are preferred)
 gyat track ../service-auth
 gyat track ../service-auth services/auth
 ```
 
-When using a local path, prefer a **relative** path (e.g. `../service-auth`) over an
-absolute one. Absolute paths are machine-specific and will break for anyone else who
-clones the umbrella repository.
+When tracking a local repository, prefer a relative path such as
+`../service-auth` over an absolute path. Relative paths are portable; absolute
+paths only work on the machine that recorded them.
 
-### `gyat add`
+After tracking, commit the resulting `.gyat` and `.gitignore` changes in the
+umbrella repository.
 
-Stage changes in one or all submodules. Mirrors `git add` but operates across
-every registered submodule at once.
+### `gyat list`
+
+List the repositories tracked in `.gyat` with their path, branch, current
+commit, status, and source URL.
 
 ```sh
-# Stage all changes in every submodule
-gyat add
+gyat list
 
-# Stage changes in a specific submodule
-gyat add services/auth
-
-# Stage changes in multiple specific submodules
-gyat add services/auth services/billing
+# Inspect only the umbrella repository itself
+gyat list --root-only
 ```
-
-When no path is given, `gyat add` runs `git add -A` inside every submodule that
-is currently checked out, leaving clean or uninitialized submodules untouched.
 
 ### `gyat status`
 
-Show the working tree status of the umbrella repository and all registered
-submodules. Each repository gets its own clearly labelled section that mirrors
-`git status`: staged changes, unstaged changes, and untracked files.
+Show working tree status across the umbrella repository and tracked repos.
 
 ```sh
-# Show status for all repositories
+# Umbrella repository + all tracked repos
 gyat status
 
-# Show status for specific submodules (plus the umbrella)
-gyat status services/auth services/billing
+# Only the auth repo, excluding the umbrella root
+gyat status --repo auth --no-root
+
+# Only the umbrella repository
+gyat status --root-only
 ```
 
-Example output:
+Each target gets its own section that mirrors `git status`: staged changes,
+unstaged changes, and untracked files. Tracked repos that are listed in `.gyat`
+but missing on disk are shown as `not cloned`.
 
-```
-umbrella repository — main
-──────────────────────────
-Changes to be committed:
-	new file:    services/auth
+### `gyat exec`
 
-services/auth — feat/login
-──────────────────────────
-Changes to be committed:
-	new file:    handler.go
+Run an arbitrary command across selected workspace targets.
 
-Changes not staged for commit:
-	modified:    main.go
+```sh
+# Run in the umbrella root and every tracked repo
+gyat exec -- git status --short
 
-services/billing — main
-───────────────────────
-nothing to commit, working tree clean
+# Run only in backend repos
+gyat exec --group backend -- go test ./...
+
+# Run only in the auth repo
+gyat exec --repo auth --no-root -- git rev-parse --abbrev-ref HEAD
 ```
 
-Submodules registered in `.gitmodules` but not yet initialised on disk are
-flagged with `not initialized` in their section. Pass one or more submodule
-paths to limit the output to those submodules — the umbrella is always shown.
+`exec` is the most generic multi-repo primitive in gyat. When the command you
+want is not built in, start here.
+
+### `gyat add`
+
+Stage changes across the workspace.
+
+```sh
+# Stage everything in the umbrella root and every cloned tracked repo
+gyat add
+
+# Stage a root file
+gyat add .gitignore
+
+# Stage all changes inside one tracked repo
+gyat add services/auth
+
+# Stage one file inside a tracked repo
+gyat add services/auth/handler.go
+
+# Stage the same path inside selected repos
+gyat add --repo services/auth --repo services/billing go.mod
+```
+
+Without selector flags, `add` routes each path to the repository that owns it.
+With selector flags, the supplied path arguments are applied inside each
+selected target.
 
 ### `gyat commit`
 
-Commit staged changes across multiple submodules simultaneously with the same
-commit message, then record the updated submodule refs in the umbrella repository.
+Commit staged changes across selected repos and the umbrella repository with the
+same message.
 
 ```sh
-# Commit all submodules with staged changes, then the umbrella
+# Commit staged changes everywhere they exist
 gyat commit -m "feat: add login endpoint"
 
-# Commit only specific submodules
+# Commit only selected tracked repos
 gyat commit -m "fix: typo" services/auth services/billing
+
+# Commit only the umbrella repository
+gyat commit -m "chore: update workspace docs" --root-only
 
 # Skip git hooks
 gyat commit -m "wip" --no-verify
 ```
 
-With no path arguments, every checked-out submodule that has staged changes is
-committed, the updated submodule references are staged in the umbrella repository,
-and the umbrella itself is committed — all with the same message.
+With no path arguments, gyat commits every tracked repo that currently has
+staged changes and then commits the umbrella repository if it also has staged
+changes. Root paths or `--root-only` can be used to commit the umbrella
+repository by itself.
 
-With one or more path arguments, only the specified submodules are committed. The
-umbrella repository is still committed afterwards to record the new submodule SHAs.
+### `gyat pull` and `gyat push`
 
-| Flag              | Description                              |
-|-------------------|------------------------------------------|
-| `-m, --message`   | Commit message (required)                |
-| `--no-verify`     | Bypass pre-commit and commit-msg hooks   |
-
-### `gyat list`
-
-List all managed submodules with their path, tracked branch, current commit, status,
-and URL.
+Pull or push selected workspace targets.
 
 ```sh
-gyat list
+# Pull everything that has an upstream
+gyat pull
+
+# Pull only backend repos, excluding the umbrella root
+gyat pull --group backend --no-root
+
+# Push just the auth repo
+gyat push --repo auth --no-root
 ```
 
-Example output:
-
-```
-PATH              BRANCH      COMMIT      STATUS        URL
-----------------------------------------------------------------------------------------------------
-services/auth     main        a1b2c3d4    up to date    https://github.com/org/service-auth
-services/billing  (default)   e5f6a7b8    modified      https://github.com/org/service-billing
-services/notify   (default)   ?           not initialized  ../service-notify
-```
-
-### `gyat untrack`
-
-Untrack a submodule cleanly. This performs the full three-step cleanup that git
-requires: deinit, delete the cached module data, and remove from the index.
-
-```sh
-gyat untrack services/auth
-```
-
-After untracking, commit the resulting changes to `.gitmodules` and the index:
-
-```sh
-gyat commit -m "chore: untrack auth submodule"
-```
+Tracked repos that use a local-path remote are skipped with a hint, since there
+is no portable remote to pull from or push to.
 
 ### `gyat update`
 
-Update one or all submodules to the latest commit on their tracked remote branch.
+Fast-forward tracked repos to the latest commit on their configured branch.
 
 ```sh
-# Update all submodules
+# Update all tracked repos
 gyat update
 
-# Update a specific submodule
-gyat update services/auth
+# Update one tracked repo
+gyat update --repo auth
+
+# Update only the umbrella repository
+gyat update --root-only
 ```
+
+If a repo has `branch` set in `.gyat`, gyat updates it from `origin/<branch>`.
+Otherwise it uses the repo's current tracking branch.
 
 ### `gyat sync`
 
-Sync each submodule's remote URL from `.gitmodules`. Useful when a repository has
-been moved or renamed and all local clones need to point to the new location.
+Sync local clones from the `.gyat` manifest.
 
 ```sh
+# Reconcile remotes, clone missing repos, and sync the root .gitignore block
 gyat sync
+
+# Sync one repo's remote without touching the umbrella root
+gyat sync --repo auth --no-root
 ```
 
-After syncing URLs, any submodules that were not yet cloned are initialized
-automatically.
+`sync` updates `origin` URLs, clones tracked repos that are missing on disk, and
+reconciles the gyat-managed block in the umbrella root `.gitignore`.
+
+### `gyat rm`
+
+Remove files from the working tree and index across the workspace.
+
+```sh
+# Remove a root file
+gyat rm .gitignore
+
+# Remove a file inside a tracked repo
+gyat rm services/auth/handler.go
+
+# Remove a shared file across selected repos
+gyat rm --repo services/auth --repo services/billing generated.lock
+```
+
+`rm` is workspace-aware, so paths are routed to the repo that owns them unless
+selector flags are used. To remove an entire tracked repository from the
+workspace, use `gyat untrack` instead.
+
+### `gyat untrack`
+
+Remove one or more tracked repos from the workspace.
+
+```sh
+gyat untrack services/auth
+
+# Untrack several repos selected by group
+gyat untrack --group experimental
+```
+
+This deletes the repo working tree, removes the repo from `.gyat`, and updates
+the gyat-managed `.gitignore` block. After untracking, commit the resulting
+changes to `.gyat` and `.gitignore` in the umbrella repository.
 
 ## Output conventions
 
 gyat follows the same output conventions as git:
 
-| Type        | Stream | Format                                                              |
-|-------------|--------|---------------------------------------------------------------------|
-| Data        | stdout | plain text or table (suitable for piping)                           |
-| Progress    | stderr | lowercase, ends with `...` — e.g. `syncing submodule URLs...`      |
-| Completion  | stderr | lowercase, no trailing punctuation — e.g. `removed submodule 'x'`  |
-| Warning     | stderr | `warning:` prefix — e.g. `warning: 'path' is an absolute path`     |
-| Hint        | stderr | `hint:` prefix — e.g. `hint: use a relative path for portability`  |
-| Error       | stderr | `error:` prefix (handled by cobra)                                  |
+| Type | Stream | Format |
+|------|--------|--------|
+| Data | stdout | plain text or tables suitable for piping |
+| Progress | stderr | lowercase, ends with `...` such as `cloning 'services/auth'...` |
+| Completion | stderr | lowercase, no trailing punctuation, such as `tracked repository 'services/auth'` |
+| Warning | stderr | `warning:` prefix, such as `warning: tracked repository 'services/auth' is not cloned, skipping` |
+| Hint | stderr | `hint:` prefix, such as `hint: commit the changes to .gyat and .gitignore` |
+| Error | stderr | returned as an error and printed by Cobra |
 
-Progress and hints are written to stderr so that data output (e.g. `gyat list`) can
-be piped cleanly without noise.
+Progress and hints go to stderr so that data output like `gyat list` can be
+piped without noise.
 
 ## How it works
 
-gyat is a thin wrapper around the `git` binary. It does not use any Go git library —
-every operation shells out to `git` directly. The only abstraction is in
-`internal/git`:
+gyat is a thin wrapper around the `git` binary. It does not use a Go git
+library. The workspace model lives in `.gyat`, and git operations are delegated
+to `internal/git`:
 
-- `git.Run(args...)` — captures stdout, returns `(string, error)`. Used when output
-  needs to be parsed (e.g. reading `.gitmodules`, parsing submodule status).
-- `git.RunInteractive(args...)` — passes stdin/stdout/stderr straight through to the
-  terminal. Used for commands that show live progress or prompt for credentials.
+- `git.Run(...)` captures stdout and returns `(string, error)`. It is used when output must be parsed, such as `git status`, branch detection, or remote configuration.
+- `git.RunInteractive(...)` passes stdin/stdout/stderr through directly for commands that should stream live output, such as `pull`, `push`, and `update`.
 
 ## License
 

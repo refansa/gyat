@@ -1,11 +1,14 @@
 package cmd
 
 import (
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 // skipIfNoGit skips the test if git is not available in PATH.
@@ -32,7 +35,7 @@ func newUmbrellaRepo(t *testing.T) string {
 }
 
 // newSourceRepo creates a new git repository with an initial commit, making it
-// suitable as a submodule source (git submodule add requires a non-empty repo).
+// suitable as a tracked repo source for workspace tests.
 func newSourceRepo(t *testing.T) string {
 	t.Helper()
 
@@ -58,7 +61,7 @@ func newSourceRepo(t *testing.T) string {
 //
 //	<base>/
 //	  umbrella/   ← gyat-managed repo
-//	  <name>/     ← repo to be added as submodule
+//	  <name>/     ← repo to be tracked in the workspace
 func newTestSetup(t *testing.T, sourceName string) (umbrella, source string) {
 	t.Helper()
 
@@ -81,7 +84,7 @@ func newTestSetup(t *testing.T, sourceName string) (umbrella, source string) {
 	runGitIn(t, umbrella, "config", "commit.gpgsign", "false")
 	runGitIn(t, umbrella, "config", "core.autocrlf", "false")
 
-	// Source — needs a commit to be usable as a submodule.
+	// Source — needs a commit so clones and updates have a valid HEAD.
 	runGitIn(t, source, "init")
 	runGitIn(t, source, "config", "user.email", "test@gyat.test")
 	runGitIn(t, source, "config", "user.name", "gyat test")
@@ -92,6 +95,65 @@ func newTestSetup(t *testing.T, sourceName string) (umbrella, source string) {
 	runGitIn(t, source, "commit", "-m", "initial commit")
 
 	return umbrella, source
+}
+
+func setupTrackedWorkspaceRepos(t *testing.T, repoNames ...string) (string, map[string]string) {
+	t.Helper()
+	skipIfNoGit(t)
+
+	base := t.TempDir()
+	umbrella := filepath.Join(base, "umbrella")
+	if err := os.MkdirAll(umbrella, 0o755); err != nil {
+		t.Fatalf("create umbrella dir: %v", err)
+	}
+
+	runGitIn(t, umbrella, "init")
+	runGitIn(t, umbrella, "config", "user.email", "test@gyat.test")
+	runGitIn(t, umbrella, "config", "user.name", "gyat test")
+	runGitIn(t, umbrella, "config", "commit.gpgsign", "false")
+	runGitIn(t, umbrella, "config", "core.autocrlf", "false")
+
+	sources := make(map[string]string, len(repoNames))
+	for _, repoName := range repoNames {
+		source := filepath.Join(base, repoName)
+		if err := os.MkdirAll(source, 0o755); err != nil {
+			t.Fatalf("create source dir %s: %v", repoName, err)
+		}
+
+		runGitIn(t, source, "init")
+		runGitIn(t, source, "config", "user.email", "test@gyat.test")
+		runGitIn(t, source, "config", "user.name", "gyat test")
+		runGitIn(t, source, "config", "commit.gpgsign", "false")
+		runGitIn(t, source, "config", "core.autocrlf", "false")
+		writeFile(t, filepath.Join(source, "main.go"), "package main\n")
+		runGitIn(t, source, "add", ".")
+		runGitIn(t, source, "commit", "-m", "initial commit")
+
+		sources[repoName] = source
+	}
+
+	initCmd := &cobra.Command{}
+	initCmd.SetErr(io.Discard)
+	if err := runInit(umbrella, initCmd, nil); err != nil {
+		t.Fatalf("runInit: %v", err)
+	}
+
+	trackCmd := &cobra.Command{}
+	trackCmd.SetErr(io.Discard)
+	for _, repoName := range repoNames {
+		if err := runTrack(umbrella, "", trackCmd, []string{relPath(umbrella, sources[repoName])}); err != nil {
+			t.Fatalf("track %s: %v", repoName, err)
+		}
+	}
+
+	commitWorkspaceMetadata(t, umbrella)
+
+	repoDirs := make(map[string]string, len(repoNames))
+	for _, repoName := range repoNames {
+		repoDirs[repoName] = filepath.Join(umbrella, repoName)
+	}
+
+	return umbrella, repoDirs
 }
 
 // runGitIn runs a git command inside dir and returns trimmed stdout.
