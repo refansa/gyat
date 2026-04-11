@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
@@ -20,6 +21,7 @@ type pagerCommand struct {
 }
 
 var pagerLookupEnv = os.LookupEnv
+var pagerLookPath = exec.LookPath
 var pagerTerminalDetector = defaultPagerTerminalDetector
 var pagerRunner = runPagerCommand
 
@@ -43,12 +45,7 @@ func writeMaybePagedOutput(stdout, stderr io.Writer, content string, disabled bo
 		return nil
 	}
 
-	if disabled || !pagerTerminalDetector(stdout) {
-		_, err := io.WriteString(stdout, content)
-		return err
-	}
-
-	pager, ok := resolvePagerCommand(pagerLookupEnv, runtime.GOOS)
+	pager, ok := activePagerCommand(stdout, disabled)
 	if !ok {
 		_, err := io.WriteString(stdout, content)
 		return err
@@ -62,12 +59,20 @@ func writeMaybePagedOutput(stdout, stderr io.Writer, content string, disabled bo
 	return nil
 }
 
-func resolvePagerCommand(lookupEnv func(string) (string, bool), goos string) (pagerCommand, bool) {
+func activePagerCommand(stdout io.Writer, disabled bool) (pagerCommand, bool) {
+	if disabled || !pagerTerminalDetector(stdout) {
+		return pagerCommand{}, false
+	}
+
+	return resolvePagerCommand(pagerLookupEnv, pagerLookPath, runtime.GOOS)
+}
+
+func resolvePagerCommand(lookupEnv func(string) (string, bool), lookPath func(string) (string, error), goos string) (pagerCommand, bool) {
 	if pagerValue, ok := lookupEnv("PAGER"); ok {
 		return parsePagerCommand(pagerValue)
 	}
 
-	return defaultPagerCommand(goos), true
+	return defaultPagerCommand(lookPath, goos), true
 }
 
 func parsePagerCommand(value string) (pagerCommand, bool) {
@@ -79,12 +84,21 @@ func parsePagerCommand(value string) (pagerCommand, bool) {
 	return pagerCommand{name: fields[0], args: fields[1:]}, true
 }
 
-func defaultPagerCommand(goos string) pagerCommand {
+
+func defaultPagerCommand(lookPath func(string) (string, error), goos string) pagerCommand {
 	if goos == "windows" {
+		if _, err := lookPath("less"); err == nil {
+			return pagerCommand{name: "less", args: []string{"-FRX"}}
+		}
 		return pagerCommand{name: "more"}
 	}
 
 	return pagerCommand{name: "less", args: []string{"-FRX"}}
+}
+
+func pagerUsesASCIIStyle(pager pagerCommand) bool {
+	name := strings.ToLower(filepath.Base(strings.TrimSpace(pager.name)))
+	return name == "more" || name == "more.com"
 }
 
 func defaultPagerTerminalDetector(writer io.Writer) bool {

@@ -12,6 +12,8 @@ func TestResolvePagerCommand_UsesPAGER(t *testing.T) {
 
 	pager, ok := resolvePagerCommand(func(string) (string, bool) {
 		return "delta --paging=never", true
+	}, func(string) (string, error) {
+		return "", nil
 	}, "linux")
 	if !ok {
 		t.Fatal("expected pager command to be resolved")
@@ -29,6 +31,8 @@ func TestResolvePagerCommand_EmptyPAGERDisablesPaging(t *testing.T) {
 
 	if _, ok := resolvePagerCommand(func(string) (string, bool) {
 		return "   ", true
+	}, func(string) (string, error) {
+		return "", nil
 	}, "linux"); ok {
 		t.Fatal("expected empty PAGER to disable paging")
 	}
@@ -42,6 +46,11 @@ func TestResolvePagerCommand_DefaultsByPlatform(t *testing.T) {
 
 		pager, ok := resolvePagerCommand(func(string) (string, bool) {
 			return "", false
+		}, func(name string) (string, error) {
+			if name == "less" {
+				return "", errors.New("missing")
+			}
+			return name, nil
 		}, "windows")
 		if !ok {
 			t.Fatal("expected default pager for windows")
@@ -56,6 +65,8 @@ func TestResolvePagerCommand_DefaultsByPlatform(t *testing.T) {
 
 		pager, ok := resolvePagerCommand(func(string) (string, bool) {
 			return "", false
+		}, func(name string) (string, error) {
+			return name, nil
 		}, "linux")
 		if !ok {
 			t.Fatal("expected default pager for posix")
@@ -67,6 +78,25 @@ func TestResolvePagerCommand_DefaultsByPlatform(t *testing.T) {
 			t.Fatalf("expected posix pager args [-FRX], got %v", pager.args)
 		}
 	})
+}
+
+func TestResolvePagerCommand_WindowsPrefersLessWhenAvailable(t *testing.T) {
+	t.Parallel()
+
+	pager, ok := resolvePagerCommand(func(string) (string, bool) {
+		return "", false
+	}, func(name string) (string, error) {
+		return name, nil
+	}, "windows")
+	if !ok {
+		t.Fatal("expected default pager for windows")
+	}
+	if pager.name != "less" {
+		t.Fatalf("expected windows to prefer less when available, got %q", pager.name)
+	}
+	if len(pager.args) != 1 || pager.args[0] != "-FRX" {
+		t.Fatalf("expected windows less args [-FRX], got %v", pager.args)
+	}
 }
 
 func TestWriteMaybePagedOutput_BypassesPagerForNonTerminal(t *testing.T) {

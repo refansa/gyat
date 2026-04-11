@@ -25,7 +25,8 @@ labelled headings. Repositories listed in .gyat but missing on disk are flagged
 with "not cloned".
 
 In interactive terminals, the report is paged automatically. Use '--no-pager'
-to print directly to stdout instead.
+to print directly to stdout instead. Use '--changed-only' to show only
+repositories with changes or unavailable state.
 
 Without selector flags, status shows the umbrella repository followed by every
 tracked repo. Use positional repo names or paths, '--repo', and '--group' to
@@ -45,6 +46,9 @@ narrow the repo set, '--no-root' to exclude the umbrella repository, or
 
 	# Print directly without a pager
 	gyat status --no-pager
+
+	# Show only repositories that need attention
+	gyat status --changed-only
 
   # Show status for a repo selected by name
   gyat status auth`,
@@ -79,9 +83,42 @@ type statusTargetResult struct {
 	status      repoStatus
 }
 
+type statusRenderStyle struct {
+	headerJoiner  string
+	underlineChar string
+}
+
+const changedOnlyFlagName = "changed-only"
+
+var unicodeStatusRenderStyle = statusRenderStyle{
+	headerJoiner:  " — ",
+	underlineChar: "─",
+}
+
+var asciiStatusRenderStyle = statusRenderStyle{
+	headerJoiner:  " - ",
+	underlineChar: "-",
+}
+
 func init() {
 	bindWorkspaceParallelFlag(statusCmd)
 	bindNoPagerFlag(statusCmd)
+	bindChangedOnlyFlag(statusCmd)
+}
+
+func bindChangedOnlyFlag(command *cobra.Command) {
+	command.Flags().Bool(changedOnlyFlagName, false, "Show only repositories with changes or unavailable state")
+}
+
+func changedOnlyEnabled(command *cobra.Command) bool {
+	if command == nil {
+		return false
+	}
+	if command.Flags().Lookup(changedOnlyFlagName) == nil {
+		return false
+	}
+	enabled, err := command.Flags().GetBool(changedOnlyFlagName)
+	return err == nil && enabled
 }
 
 // parsePorcelain parses the output of "git status --porcelain" into a slice of
@@ -168,16 +205,29 @@ func collectRepoStatus(dir string) (repoStatus, error) {
 	return rs, nil
 }
 
+func (status repoStatus) clean() bool {
+	return len(status.staged) == 0 && len(status.unstaged) == 0 && len(status.untracked) == 0
+}
+
+func statusRenderStyleForOutput(stdout io.Writer, pagerDisabled bool) statusRenderStyle {
+	pager, ok := activePagerCommand(stdout, pagerDisabled)
+	if ok && pagerUsesASCIIStyle(pager) {
+		return asciiStatusRenderStyle
+	}
+
+	return unicodeStatusRenderStyle
+}
+
 // printRepoSection writes one repository's status block to out.
 // label is the human-friendly name shown in the section header (e.g.
 // "umbrella repository" or a tracked repo path like "services/auth").
-func printRepoSection(out io.Writer, label string, rs repoStatus) {
-	header := fmt.Sprintf("%s — %s", label, rs.branch)
-	sep := strings.Repeat("─", utf8.RuneCountInString(header))
+func printRepoSection(out io.Writer, label string, rs repoStatus, style statusRenderStyle) {
+	header := label + style.headerJoiner + rs.branch
+	sep := strings.Repeat(style.underlineChar, utf8.RuneCountInString(header))
 	fmt.Fprintln(out, header)
 	fmt.Fprintln(out, sep)
 
-	if len(rs.staged) == 0 && len(rs.unstaged) == 0 && len(rs.untracked) == 0 {
+	if rs.clean() {
 		fmt.Fprintln(out, "nothing to commit, working tree clean")
 		fmt.Fprintln(out)
 		return
@@ -210,9 +260,9 @@ func printRepoSection(out io.Writer, label string, rs repoStatus) {
 
 // printUnavailableRepo writes a status block to out for a tracked repository
 // whose working-tree directory is not available on disk.
-func printUnavailableRepo(out io.Writer, path, status string) {
-	header := fmt.Sprintf("%s — (%s)", path, status)
-	sep := strings.Repeat("─", utf8.RuneCountInString(header))
+func printUnavailableRepo(out io.Writer, path, status string, style statusRenderStyle) {
+	header := path + style.headerJoiner + "(" + status + ")"
+	sep := strings.Repeat(style.underlineChar, utf8.RuneCountInString(header))
 	fmt.Fprintln(out, header)
 	fmt.Fprintln(out, sep)
 	fmt.Fprintln(out, status)
@@ -237,8 +287,12 @@ func runStatusWithFlags(dir string, flags workspaceTargetFlags, cmd *cobra.Comma
 func runStatusWorkspace(ws workspace.Workspace, flags workspaceTargetFlags, cmd *cobra.Command, args []string) error {
 	stdout := cmd.OutOrStdout()
 	errout := cmd.ErrOrStderr()
+	pagerDisabled := noPagerEnabled(cmd)
+	changedOnly := changedOnlyEnabled(cmd)
+	style := statusRenderStyleForOutput(stdout, pagerDisabled)
 	var report bytes.Buffer
 	var failures commandFailures
+	renderedSections := 0
 
 	targets, err := ws.ResolveTargets(flags.targetOptions(true, args))
 	if err != nil {
@@ -278,15 +332,25 @@ func runStatusWorkspace(ws workspace.Workspace, flags workspaceTargetFlags, cmd 
 			continue
 		}
 
-		if result.Value.unavailable != "" {
-			printUnavailableRepo(&report, result.Value.label, result.Value.unavailable)
+		if changedOnly && result.Value.unavailable == "" && result.Value.status.clean() {
 			continue
 		}
 
-		printRepoSection(&report, result.Value.label, result.Value.status)
+		if result.Value.unavailable != "" {
+			printUnavailableRepo(&report, result.Value.label, result.Value.unavailable, style)
+			renderedSections++
+			continue
+		}
+
+		printRepoSection(&report, result.Value.label, result.Value.status, style)
+		renderedSections++
 	}
 
-	if err := writeMaybePagedOutput(stdout, errout, report.String(), noPagerEnabled(cmd)); err != nil {
+	if changedOnly && renderedSections == 0 {
+		fmt.Fprintln(&report, "no changed repositories found")
+	}
+
+	if err := writeMaybePagedOutput(stdout, errout, report.String(), pagerDisabled); err != nil {
 		return err
 	}
 

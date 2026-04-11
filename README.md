@@ -183,7 +183,9 @@ Show working tree status across the umbrella repository and tracked repos.
 
 In interactive terminals, `gyat status` pages the rendered report
 automatically. Use `--no-pager` to print directly to stdout, and note that
-redirected or piped output bypasses the pager automatically.
+redirected or piped output bypasses the pager automatically. Use
+`--changed-only` to hide clean repositories and focus on repos that need
+attention.
 
 ```sh
 # Umbrella repository + all tracked repos
@@ -197,6 +199,9 @@ gyat status --root-only
 
 # Print directly without paging
 gyat status --no-pager
+
+# Show only repositories with changes or unavailable state
+gyat status --changed-only
 ```
 
 Each target gets its own section that mirrors `git status`: staged changes,

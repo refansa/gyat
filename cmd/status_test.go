@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -371,5 +372,120 @@ func TestRunStatus_PagesRenderedReport(t *testing.T) {
 	}
 	if stdoutBuf.Len() != 0 {
 		t.Fatalf("expected pager path to bypass direct stdout writes, got:\n%s", stdoutBuf.String())
+	}
+}
+
+func TestRunStatus_PagedMoreUsesASCIISeparators(t *testing.T) {
+	skipIfNoGit(t)
+
+	umbrella, _ := setupTrackedWorkspaceRepo(t, "svc-status-v2-more")
+
+	oldDetector := pagerTerminalDetector
+	oldLookup := pagerLookupEnv
+	oldLookPath := pagerLookPath
+	oldRunner := pagerRunner
+	t.Cleanup(func() {
+		pagerTerminalDetector = oldDetector
+		pagerLookupEnv = oldLookup
+		pagerLookPath = oldLookPath
+		pagerRunner = oldRunner
+	})
+
+	pagerTerminalDetector = func(io.Writer) bool { return true }
+	pagerLookupEnv = func(string) (string, bool) {
+		return "", false
+	}
+	pagerLookPath = func(name string) (string, error) {
+		if name == "less" {
+			return "", errors.New("missing")
+		}
+		return name, nil
+	}
+
+	var pagedContent string
+	var usedPager pagerCommand
+	pagerRunner = func(_ io.Writer, _ io.Writer, content string, pager pagerCommand) error {
+		pagedContent = content
+		usedPager = pager
+		return nil
+	}
+
+	var stdoutBuf bytes.Buffer
+	sc := &cobra.Command{}
+	sc.SetOut(&stdoutBuf)
+	sc.SetErr(io.Discard)
+
+	if err := runStatus(umbrella, sc, nil); err != nil {
+		t.Fatalf("runStatus: %v", err)
+	}
+	if usedPager.name != "more" {
+		t.Fatalf("expected fallback pager 'more', got %#v", usedPager)
+	}
+	if strings.Contains(pagedContent, "—") || strings.Contains(pagedContent, "─") {
+		t.Fatalf("expected ASCII-safe paged content, got:\n%s", pagedContent)
+	}
+	if !strings.Contains(pagedContent, "umbrella repository - ") {
+		t.Fatalf("expected ASCII header separator in paged content, got:\n%s", pagedContent)
+	}
+}
+
+func TestRunStatus_ChangedOnlyOmitsCleanRepos(t *testing.T) {
+	skipIfNoGit(t)
+
+	umbrella, repoDirs := setupTrackedWorkspaceRepos(t, "svc-status-v2-dirty", "svc-status-v2-clean-sibling")
+	writeFile(t, filepath.Join(repoDirs["svc-status-v2-dirty"], "dirty.txt"), "dirty\n")
+
+	var stdoutBuf bytes.Buffer
+	sc := &cobra.Command{}
+	sc.SetOut(&stdoutBuf)
+	sc.SetErr(io.Discard)
+	sc.Flags().Bool(changedOnlyFlagName, false, "")
+	if err := sc.Flags().Set(changedOnlyFlagName, "true"); err != nil {
+		t.Fatalf("set %s: %v", changedOnlyFlagName, err)
+	}
+
+	if err := runStatus(umbrella, sc, nil); err != nil {
+		t.Fatalf("runStatus: %v", err)
+	}
+
+	out := stdoutBuf.String()
+	if strings.Contains(out, "umbrella repository") {
+		t.Fatalf("did not expect clean umbrella in changed-only output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "svc-status-v2-dirty") {
+		t.Fatalf("expected changed repo in output, got:\n%s", out)
+	}
+	if strings.Contains(out, "svc-status-v2-clean-sibling") {
+		t.Fatalf("did not expect clean repo in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Untracked files:") {
+		t.Fatalf("expected dirty repo details, got:\n%s", out)
+	}
+}
+
+func TestRunStatus_ChangedOnlyReportsWhenAllClean(t *testing.T) {
+	skipIfNoGit(t)
+
+	umbrella, _ := setupTrackedWorkspaceRepo(t, "svc-status-v2-all-clean")
+
+	var stdoutBuf bytes.Buffer
+	sc := &cobra.Command{}
+	sc.SetOut(&stdoutBuf)
+	sc.SetErr(io.Discard)
+	sc.Flags().Bool(changedOnlyFlagName, false, "")
+	if err := sc.Flags().Set(changedOnlyFlagName, "true"); err != nil {
+		t.Fatalf("set %s: %v", changedOnlyFlagName, err)
+	}
+
+	if err := runStatus(umbrella, sc, nil); err != nil {
+		t.Fatalf("runStatus: %v", err)
+	}
+
+	out := stdoutBuf.String()
+	if !strings.Contains(out, "no changed repositories found") {
+		t.Fatalf("expected changed-only empty message, got:\n%s", out)
+	}
+	if strings.Contains(out, "nothing to commit, working tree clean") {
+		t.Fatalf("did not expect clean sections in changed-only output, got:\n%s", out)
 	}
 }
