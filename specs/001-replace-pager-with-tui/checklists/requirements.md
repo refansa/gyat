@@ -19,6 +19,7 @@
 
 - [x] No [NEEDS CLARIFICATION] markers remain
   - Evidence: No NEEDS CLARIFICATION tokens present in the spec.
+  - Note: A Clarifications section was added to record the Turbo parity decision.
 - [x] Requirements are testable and unambiguous
   - Issues: FR-007 references a numeric limit (50,000 lines) which is a reasonable testable target but may need adjustment per environment; marked acceptable as an assumption.
 - [x] Success criteria are measurable
@@ -44,6 +45,11 @@
   - Issue: Measurable outcomes reference usability test targets and performance budgets that require external validation; considered pending until validation testing is completed.
 - [x] No implementation details leak into specification
   - Evidence: Spec remains focused on behavior and success measures.
+
+## Clarification Actions
+
+- [x] Clarification recorded: Turbo-like visual/navigation parity (MVP read-only) — added FR-009 and acceptance criteria.
+
 
 ## Notes
 

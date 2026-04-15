@@ -5,6 +5,14 @@
 **Status**: Draft  
 **Input**: User description: "After second thought, I want to change the pager implementation into something like a tui implementation. It is easier to navigate rather than a standard pager"
 
+## Clarifications
+
+### Session 2026-04-15
+
+- Q: Desired parity level with the Turbo monorepo TUI? 015026-04-15026-04-15026-04-15026-04-15026-04-15026-04-15026-04-15026-04-15 → A: Visual & navigation parity (MVP): match Turbo's layout and keyboard-driven navigation model (panes, focus, search behavior), but remain read-only initially (no task run/stop controls).
+
+Note: This decision prioritizes familiarity and reduced learning curve for users who know Turbo while keeping initial scope bounded. Full task-run controls and live task graphs are deferred.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Navigate long CLI output (Priority: P1)
@@ -90,6 +98,7 @@ As a new or infrequent user, I want an obvious way to discover how to navigate a
 - **FR-006**: For non-interactive contexts (stdout not a TTY or when piped), the system MUST NOT invoke the TUI viewer and MUST emit raw output exactly as before.
 - **FR-007**: The viewer MUST handle large outputs (for example, up to 50,000 lines) without blocking the calling process; when limits are reached it MUST degrade gracefully and document limitations.
 - **FR-008**: The change MUST preserve existing automation: exit codes and piped outputs are unchanged.
+- **FR-009**: The viewer SHOULD match the Turbo monorepo TUI visual layout and navigation model (for example: multi-pane focus, consistent keyboard navigation, and in-view search), but the MVP MUST be read-only (no task execution, run/stop, or live task controls).
 
 ### Acceptance Criteria (mapping to functional requirements)
 
@@ -101,6 +110,7 @@ As a new or infrequent user, I want an obvious way to discover how to navigate a
 - **FR-006**: Pipe the command output to a file or run in a non-TTY; confirm output is identical to the pre-change behavior.
 - **FR-007**: Feed the viewer with a 50,000-line output in a test environment; verify that the viewer opens and remains responsive or documents graceful degradation.
 - **FR-008**: Run existing automation or a smoke test suite that relies on the command; confirm no failures introduced by pager behavior changes.
+- **FR-009**: Verify the viewer's layout and navigation mirror Turbo's TUI mental model in read-only mode (help text lists equivalent keybindings and pane behavior); confirm no task-run controls are present.
 
 ## Success Criteria *(mandatory)*
 
