@@ -216,6 +216,10 @@ func (status repoStatus) clean() bool {
 }
 
 func statusRenderStyleForOutput(stdout io.Writer, pagerDisabled bool) statusRenderStyle {
+	if _, _, ok := interactiveTUIFiles(stdout, pagerDisabled); ok {
+		return unicodeStatusRenderStyle
+	}
+
 	pager, ok := activePagerCommand(stdout, pagerDisabled)
 	if ok && pagerUsesASCIIStyle(pager) {
 		return asciiStatusRenderStyle
