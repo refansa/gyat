@@ -111,3 +111,5 @@ tmp/
 
 # Spec-kit specific files
 .specify/extensions
+detect-output.json
+detect-raw.txt

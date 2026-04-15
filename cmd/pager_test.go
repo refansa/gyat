@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"os"
 	"testing"
 )
 
@@ -195,5 +196,77 @@ func TestWriteMaybePagedOutput_FallsBackWhenPagerFails(t *testing.T) {
 	}
 	if stdout.String() != "status output\n" {
 		t.Fatalf("expected fallback stdout write, got %q", stdout.String())
+	}
+}
+
+func TestWriteMaybePagedOutput_EnvNoPagerDisablesPaging(t *testing.T) {
+	oldDetector := pagerTerminalDetector
+	oldLookup := pagerLookupEnv
+	oldRunner := pagerRunner
+	oldEnv := ""
+	if v, ok := os.LookupEnv("GYAT_NO_PAGER"); ok {
+		oldEnv = v
+	}
+	t.Cleanup(func() {
+		pagerTerminalDetector = oldDetector
+		pagerLookupEnv = oldLookup
+		pagerRunner = oldRunner
+		if oldEnv == "" {
+			_ = os.Unsetenv("GYAT_NO_PAGER")
+		} else {
+			_ = os.Setenv("GYAT_NO_PAGER", oldEnv)
+		}
+	})
+
+	pagerTerminalDetector = func(io.Writer) bool { return true }
+	pagerLookupEnv = func(string) (string, bool) {
+		t.Fatal("pager env lookup should not run when GYAT_NO_PAGER disables paging")
+		return "", false
+	}
+	pagerRunner = func(io.Writer, io.Writer, string, pagerCommand) error {
+		t.Fatal("pager runner should not run when GYAT_NO_PAGER disables paging")
+		return nil
+	}
+
+	_ = os.Setenv("GYAT_NO_PAGER", "1")
+	var stdout bytes.Buffer
+	if err := writeMaybePagedOutput(&stdout, io.Discard, "status output\n", false); err != nil {
+		t.Fatalf("writeMaybePagedOutput: %v", err)
+	}
+	if stdout.String() != "status output\n" {
+		t.Fatalf("unexpected stdout: %q", stdout.String())
+	}
+}
+
+func TestWriteMaybePagedOutput_BypassesPagerForBinaryContent(t *testing.T) {
+	oldDetector := pagerTerminalDetector
+	oldLookup := pagerLookupEnv
+	oldRunner := pagerRunner
+	t.Cleanup(func() {
+		pagerTerminalDetector = oldDetector
+		pagerLookupEnv = oldLookup
+		pagerRunner = oldRunner
+	})
+
+	// Simulate a terminal so other checks would pass, but ensure binary
+	// content causes an early direct write and the pager runner is not invoked.
+	pagerTerminalDetector = func(io.Writer) bool { return true }
+	pagerLookupEnv = func(string) (string, bool) {
+		t.Fatal("pager env lookup should not run for binary content")
+		return "", false
+	}
+	pagerRunner = func(io.Writer, io.Writer, string, pagerCommand) error {
+		t.Fatal("pager runner should not run for binary content")
+		return nil
+	}
+
+	var stdout bytes.Buffer
+	// include a NUL byte to mark the content as binary per DetectIsText heuristic
+	binaryContent := string([]byte{0x00, 0xff, 0x00})
+	if err := writeMaybePagedOutput(&stdout, io.Discard, binaryContent, false); err != nil {
+		t.Fatalf("writeMaybePagedOutput: %v", err)
+	}
+	if stdout.Len() == 0 {
+		t.Fatalf("expected binary content to be written directly to stdout")
 	}
 }
