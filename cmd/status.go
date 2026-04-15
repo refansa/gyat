@@ -19,14 +19,17 @@ var statusCmd = &cobra.Command{
 	Long: `Show the working tree status of the umbrella repository and tracked repos
 in the current gyat workspace.
 
+
 For each repository a section is printed that mirrors 'git status': staged
 changes, unstaged changes, and untracked files are listed under clearly
 labelled headings. Repositories listed in .gyat but missing on disk are flagged
 with "not cloned".
 
-In interactive terminals, the report is paged automatically. Use '--no-pager'
-to print directly to stdout instead. Use '--changed-only' to show only
-repositories with changes or unavailable state.
+In interactive terminals, the report is paged automatically. The pager is
+skipped when stdout is not a TTY or when the output appears to be binary to
+avoid mangling raw bytes. Use '--no-pager' or set the environment variable
+GYAT_NO_PAGER=1 to force direct streaming to stdout. Use '--changed-only' to
+show only repositories with changes or unavailable state.
 
 Without selector flags, status shows the umbrella repository followed by every
 tracked repo. Use positional repo names or paths, '--repo', and '--group' to
@@ -44,8 +47,11 @@ narrow the repo set, '--no-root' to exclude the umbrella repository, or
 	# Show only the umbrella repository
 	gyat status --root-only
 
-	# Print directly without a pager
-	gyat status --no-pager
+    # Print directly without a pager
+    gyat status --no-pager
+
+    # Force direct streaming via environment variable
+    GYAT_NO_PAGER=1 gyat status
 
 	# Show only repositories that need attention
 	gyat status --changed-only
