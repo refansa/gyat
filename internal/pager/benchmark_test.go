@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	pagertui "github.com/refansa/gyat/v2/internal/pager/tui"
 )
 
 func BenchmarkPager_RenderSmall(b *testing.B) {
@@ -18,8 +20,8 @@ func BenchmarkPager_RenderSmall(b *testing.B) {
 }
 
 func BenchmarkPager_RenderLarge(b *testing.B) {
-	lines := make([]string, 0, 10000)
-	for i := 0; i < 10000; i++ {
+	lines := make([]string, 0, 50000)
+	for i := 0; i < 50000; i++ {
 		lines = append(lines, "line")
 	}
 	content := strings.Join(lines, "\n") + "\n"
@@ -29,6 +31,20 @@ func BenchmarkPager_RenderLarge(b *testing.B) {
 		p := NewPager(&buf)
 		p.height = 40
 		_, _ = p.Render([]byte(content))
+	}
+}
+
+func BenchmarkTUIModel_RenderLarge(b *testing.B) {
+	lines := make([]string, 0, 50000)
+	for i := 0; i < 50000; i++ {
+		lines = append(lines, "line")
+	}
+	content := []byte(strings.Join(lines, "\n") + "\n")
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		model := pagertui.NewModel(content, 120, 40)
+		_ = model.View()
 	}
 }
 

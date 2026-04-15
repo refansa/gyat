@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"github.com/refansa/gyat/v2/internal/pager"
+	"github.com/refansa/gyat/v2/internal/pager/tui"
 	"github.com/spf13/cobra"
 )
 
@@ -23,11 +24,13 @@ type pagerCommand struct {
 
 var pagerLookupEnv = os.LookupEnv
 var pagerLookPath = exec.LookPath
+var pagerStdin = os.Stdin
 
 // Use the internal pager package's terminal detector by default. Tests
 // may override pagerTerminalDetector as needed.
 var pagerTerminalDetector = pager.IsTerminal
 var pagerRunner = runPagerCommand
+var pagerTUIRunner = tui.RunTUI
 
 func bindNoPagerFlag(command *cobra.Command) {
 	command.Flags().Bool(noPagerFlagName, false, "Disable paging even when stdout is an interactive terminal")
@@ -56,27 +59,10 @@ func writeMaybePagedOutput(stdout, stderr io.Writer, content string, disabled bo
 		return err
 	}
 
-	// On Windows prefer the internal pager implementation when appropriate.
-	if runtime.GOOS == "windows" && !disabled && !pager.GYATNoPager() && pager.IsTerminal(stdout) {
-		// Prefer fully interactive session when both stdin and stdout are terminals.
-		outFile, outOK := stdout.(*os.File)
-		inFile := os.Stdin
-		if outOK && pager.IsTerminal(outFile) && pager.IsTerminal(inFile) {
-			p := pager.NewPager(outFile)
-			if _, err := p.Render([]byte(content)); err == nil {
-				if err := pager.RunInteractiveSession(p, inFile, outFile); err == nil {
-					return nil
-				}
-				// If interactive session failed, fall back to external pager below.
-			}
-		} else {
-			// Non-terminal or test harness: render a non-interactive first page
-			p := pager.NewPager(stdout)
-			if _, err := p.Render([]byte(content)); err == nil {
-				return nil
-			}
+	if inFile, outFile, ok := interactiveTUIFiles(stdout, disabled); ok {
+		if err := pagerTUIRunner([]byte(content), inFile, outFile); err == nil {
+			return nil
 		}
-		// Fall through to existing behavior on error
 	}
 
 	extPager, ok := activePagerCommand(stdout, disabled)
@@ -91,6 +77,23 @@ func writeMaybePagedOutput(stdout, stderr io.Writer, content string, disabled bo
 	}
 
 	return nil
+}
+
+func interactiveTUIFiles(stdout io.Writer, disabled bool) (*os.File, *os.File, bool) {
+	if disabled || pager.GYATNoPager() || !pagerTerminalDetector(stdout) {
+		return nil, nil, false
+	}
+
+	outFile, outOK := stdout.(*os.File)
+	inFile := pagerStdin
+	if !outOK || outFile == nil || inFile == nil {
+		return nil, nil, false
+	}
+	if !pagerTerminalDetector(outFile) || !pagerTerminalDetector(inFile) {
+		return nil, nil, false
+	}
+
+	return inFile, outFile, true
 }
 
 func activePagerCommand(stdout io.Writer, disabled bool) (pagerCommand, bool) {
