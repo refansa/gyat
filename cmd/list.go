@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -9,6 +10,9 @@ import (
 
 	"github.com/refansa/gyat/v2/internal/git"
 	"github.com/refansa/gyat/v2/internal/manifest"
+	uiData "github.com/refansa/gyat/v2/internal/ui/data"
+	uiModel "github.com/refansa/gyat/v2/internal/ui/model"
+	repoTUI "github.com/refansa/gyat/v2/internal/ui/tui"
 	"github.com/refansa/gyat/v2/internal/workspace"
 	"github.com/spf13/cobra"
 )
@@ -25,6 +29,8 @@ type repoInfo struct {
 func init() {
 	bindWorkspaceParallelFlag(listCmd)
 }
+
+var listTUIRunner = repoTUI.Run
 
 var listCmd = &cobra.Command{
 	Use:   "list",
@@ -92,8 +98,76 @@ func runListWorkspace(ws workspace.Workspace, flags workspaceTargetFlags, cmd *c
 		repos = append(repos, result.Value)
 	}
 
+	if !flags.noUI {
+		if inFile, outFile, ok := interactiveUIFiles(stdout); ok {
+			entries, err := collectListEntries(context.Background(), ws, repos)
+			if err == nil {
+				if err := listTUIRunner("gyat list", entries, inFile, outFile); err == nil {
+					return nil
+				}
+			}
+		}
+	}
+
 	printRepoTable(stdout, repos)
 	return nil
+}
+
+func collectListEntries(ctx context.Context, ws workspace.Workspace, repos []repoInfo) ([]uiModel.RepositoryEntry, error) {
+	paths := make([]string, 0, len(repos))
+	for _, repo := range repos {
+		paths = append(paths, repo.path)
+	}
+
+	return uiData.CollectRepositoryEntries(ctx, paths, func(_ context.Context, path string) (uiModel.RepositoryEntry, error) {
+		for _, repo := range repos {
+			if repo.path != path {
+				continue
+			}
+
+			entry := uiModel.RepositoryEntry{
+				ID:            repo.path,
+				DisplayName:   repo.name,
+				Path:          repo.path,
+				CurrentBranch: repo.branch,
+				SummaryState:  repo.status,
+				Metadata:      map[string]string{},
+				StatusView: uiModel.RepositoryStatusView{
+					RepoID: repo.path,
+					Tabs: []uiModel.StatusTab{{
+						ID:      "overview",
+						Title:   "Overview",
+						Content: formatListOverview(repo),
+					}},
+				},
+			}
+
+			if repo.path != "." {
+				if manifestRepo, ok := workspaceRepoByPath(ws, repo.path); ok {
+					entry.DisplayName = manifestRepo.Name
+					if len(manifestRepo.Groups) > 0 {
+						entry.Metadata["group"] = manifestRepo.Groups[0]
+					}
+				}
+			} else {
+				entry.Metadata["group"] = "Workspace"
+			}
+
+			return entry, nil
+		}
+
+		return uiModel.RepositoryEntry{}, fmt.Errorf("repository %q not found", path)
+	})
+}
+
+func formatListOverview(repo repoInfo) []string {
+	return []string{
+		"Path: " + repo.path,
+		"Branch: " + repo.branch,
+		"Commit: " + repo.sha,
+		"Status: " + repo.status,
+		"URL: " + repo.url,
+	}
 }
 
 func collectRootInfo(root string) repoInfo {

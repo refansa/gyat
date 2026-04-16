@@ -32,3 +32,10 @@ func TestExecute_DoesNotPrintUsageOnError(t *testing.T) {
 		t.Fatalf("expected usage output to be suppressed\nstdout:\n%s\nstderr:\n%s", stdout.String(), stderr.String())
 	}
 }
+
+func TestRootCommandRegistersNoUIFlag(t *testing.T) {
+	flag := rootCmd.PersistentFlags().Lookup("no-ui")
+	if flag == nil {
+		t.Fatal("expected --no-ui persistent flag to be registered")
+	}
+}

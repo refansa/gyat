@@ -5,6 +5,15 @@
 **Status**: Draft  
 **Input**: User description: "Currently the terminal UI is mimick the behavior of a pager, I want to change this to be a proper ui design to be an interactive ui like table (list) and tabs (status) for each individual repositories (for commands like status and list) BRANCH_NAME=002-overhaul-terminal-ui"
 
+## Clarifications
+
+### Session 2026-04-15
+
+- Q: Will we support a machine-readable `--json` output for these commands? → A: No, we will not support `--json` for now.
+- Q: Preferred UI layout and navigation? → A: Left sidebar for repository list (tabs), main content (status) on the right; use Up/Down to navigate repositories.
+- Q: Preferred repository grouping behavior? → A: Grouped list with non-collapsible section headers; grouping is taken from the manifest `group` field. Repositories without a `group` value fall into an "Other" section.
+- Q: Should the interactive UI be shown by default (no flag)? → A: Yes. The interactive TUI is the default when the command is run in an interactive terminal. To opt out, users may pass `--no-ui` to get plain-text (legacy/pager-style) output. The CLI will also automatically fall back to non-interactive plain-text output when stdout is not a TTY (for scripts, pipes, or CI).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Browse repositories interactively (Priority: P1)
@@ -79,6 +88,9 @@ As a user running repository-oriented commands such as `list` and `status`, I ge
 - **FR-010**: The system MUST remain usable when repository labels are longer than the available display width.
 - **FR-011**: The system MUST support keyboard-driven interaction for list navigation and tab switching.
 - **FR-012**: The system MUST open into a meaningful default view so users can understand both the current repository selection and available detail areas immediately.
+ - **FR-013**: The system MUST group repositories in the left sidebar by the repository `group` field from the workspace manifest. Entries without a `group` value MUST appear under an "Other" section.
+ - **FR-014**: The system MUST open the interactive TUI by default on interactive terminals. Provide a `--no-ui` flag to opt out to plain-text/pager-style output and automatically fall back to non-interactive output when stdout is not a TTY.
+ - **FR-013**: The system MUST group repositories in the left sidebar by the repository `group` field from the workspace manifest. Entries without a `group` value MUST appear under an "Other" section.
 
 ### Key Entities *(include if feature involves data)*
 

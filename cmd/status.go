@@ -2,13 +2,18 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/refansa/gyat/v2/internal/git"
+	uiData "github.com/refansa/gyat/v2/internal/ui/data"
+	uiModel "github.com/refansa/gyat/v2/internal/ui/model"
+	repoTUI "github.com/refansa/gyat/v2/internal/ui/tui"
 	"github.com/refansa/gyat/v2/internal/workspace"
 	"github.com/spf13/cobra"
 )
@@ -105,6 +110,8 @@ var asciiStatusRenderStyle = statusRenderStyle{
 	headerJoiner:  " - ",
 	underlineChar: "-",
 }
+
+var statusTUIRunner = repoTUI.Run
 
 func init() {
 	bindWorkspaceParallelFlag(statusCmd)
@@ -356,6 +363,17 @@ func runStatusWorkspace(ws workspace.Workspace, flags workspaceTargetFlags, cmd 
 		renderedSections++
 	}
 
+	if !flags.noUI {
+		if inFile, outFile, ok := interactiveTUIFiles(stdout, pagerDisabled); ok {
+			entries, err := collectStatusEntries(context.Background(), ws, results, changedOnly)
+			if err == nil && len(entries) > 0 {
+				if err := statusTUIRunner("gyat status", entries, inFile, outFile); err == nil {
+					return failures.err("status failed")
+				}
+			}
+		}
+	}
+
 	if changedOnly && renderedSections == 0 {
 		fmt.Fprintln(&report, "no changed repositories found")
 	}
@@ -369,4 +387,101 @@ func runStatusWorkspace(ws workspace.Workspace, flags workspaceTargetFlags, cmd 
 	}
 
 	return failures.err("status failed")
+}
+
+func collectStatusEntries(ctx context.Context, ws workspace.Workspace, results []workspace.TargetResult[statusTargetResult], changedOnly bool) ([]uiModel.RepositoryEntry, error) {
+	paths := make([]string, 0, len(results))
+	resultByPath := make(map[string]statusTargetResult, len(results))
+
+	for _, result := range results {
+		if !result.Ran || result.Err != nil {
+			continue
+		}
+		path := result.Target.Path
+		if changedOnly && result.Value.unavailable == "" && result.Value.status.clean() {
+			continue
+		}
+		paths = append(paths, path)
+		resultByPath[path] = result.Value
+	}
+
+	return uiData.CollectRepositoryEntries(ctx, paths, func(_ context.Context, path string) (uiModel.RepositoryEntry, error) {
+		result, ok := resultByPath[path]
+		if !ok {
+			return uiModel.RepositoryEntry{}, fmt.Errorf("status result %q not found", path)
+		}
+
+		entry := uiModel.RepositoryEntry{
+			ID:           path,
+			DisplayName:  path,
+			Path:         path,
+			SummaryState: summarizeStatusTarget(result),
+			Metadata:     map[string]string{},
+		}
+
+		if path == "." {
+			entry.DisplayName = "umbrella repository"
+			entry.Metadata["group"] = "Workspace"
+		} else if repo, found := workspaceRepoByPath(ws, path); found {
+			entry.DisplayName = repo.Name
+			if len(repo.Groups) > 0 {
+				entry.Metadata["group"] = repo.Groups[0]
+			}
+		}
+
+		if result.unavailable != "" {
+			entry.StatusView = uiModel.RepositoryStatusView{
+				RepoID: path,
+				Tabs: []uiModel.StatusTab{{
+					ID:      "overview",
+					Title:   "Overview",
+					Content: []string{"Status: " + result.unavailable},
+				}},
+			}
+			return entry, nil
+		}
+
+		entry.CurrentBranch = result.status.branch
+		entry.StatusView = uiModel.RepositoryStatusView{
+			RepoID:    path,
+			ActiveTab: "overview",
+			Tabs: []uiModel.StatusTab{
+				{ID: "overview", Title: "Overview", Content: []string{"Branch: " + result.status.branch, "Summary: " + entry.SummaryState, "Path: " + resolvedStatusPath(ws.RootDir, path)}},
+				{ID: "staged", Title: "Staged", Content: renderStatusEntries(result.status.staged, func(e statusEntry) string { return statusLabel(e.x) + ": " + e.path })},
+				{ID: "unstaged", Title: "Unstaged", Content: renderStatusEntries(result.status.unstaged, func(e statusEntry) string { return statusLabel(e.y) + ": " + e.path })},
+				{ID: "untracked", Title: "Untracked", Content: renderStatusEntries(result.status.untracked, func(e statusEntry) string { return e.path })},
+			},
+		}
+
+		return entry, nil
+	})
+}
+
+func summarizeStatusTarget(result statusTargetResult) string {
+	if result.unavailable != "" {
+		return result.unavailable
+	}
+	if result.status.clean() {
+		return "clean"
+	}
+	count := len(result.status.staged) + len(result.status.unstaged) + len(result.status.untracked)
+	return fmt.Sprintf("needs attention (%d)", count)
+}
+
+func renderStatusEntries(entries []statusEntry, format func(statusEntry) string) []string {
+	if len(entries) == 0 {
+		return []string{"None."}
+	}
+	lines := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		lines = append(lines, format(entry))
+	}
+	return lines
+}
+
+func resolvedStatusPath(rootDir, repoPath string) string {
+	if repoPath == "." {
+		return rootDir
+	}
+	return filepath.Join(rootDir, filepath.FromSlash(repoPath))
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -144,6 +145,39 @@ func Validate(file File) error {
 	}
 
 	return nil
+}
+
+// OrderReposByManifest returns a reordered copy of repos. Repositories already
+// present in the manifest keep manifest order; unknown repositories are placed
+// afterward in lexicographic path order.
+func OrderReposByManifest(file File, repos []Repo) []Repo {
+	if len(repos) == 0 {
+		return nil
+	}
+
+	ordered := append([]Repo(nil), repos...)
+	manifestIndex := make(map[string]int, len(file.Repos))
+	for index, repo := range file.Repos {
+		manifestIndex[repo.Path] = index
+	}
+
+	sort.SliceStable(ordered, func(i, j int) bool {
+		leftIndex, leftFound := manifestIndex[ordered[i].Path]
+		rightIndex, rightFound := manifestIndex[ordered[j].Path]
+
+		switch {
+		case leftFound && rightFound:
+			return leftIndex < rightIndex
+		case leftFound:
+			return true
+		case rightFound:
+			return false
+		default:
+			return ordered[i].Path < ordered[j].Path
+		}
+	})
+
+	return ordered
 }
 
 func normalizeFile(file File) File {

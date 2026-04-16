@@ -84,6 +84,14 @@ func interactiveTUIFiles(stdout io.Writer, disabled bool) (*os.File, *os.File, b
 		return nil, nil, false
 	}
 
+	return interactiveUIFiles(stdout)
+}
+
+func interactiveUIFiles(stdout io.Writer) (*os.File, *os.File, bool) {
+	if !pagerTerminalDetector(stdout) {
+		return nil, nil, false
+	}
+
 	outFile, outOK := stdout.(*os.File)
 	inFile := pagerStdin
 	if !outOK || outFile == nil || inFile == nil {

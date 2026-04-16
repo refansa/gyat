@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	uiModel "github.com/refansa/gyat/v2/internal/ui/model"
 	"github.com/spf13/cobra"
 )
 
@@ -487,5 +488,105 @@ func TestRunStatus_ChangedOnlyReportsWhenAllClean(t *testing.T) {
 	}
 	if strings.Contains(out, "nothing to commit, working tree clean") {
 		t.Fatalf("did not expect clean sections in changed-only output, got:\n%s", out)
+	}
+}
+
+func TestRunStatus_UsesInteractiveTUIWhenEnabled(t *testing.T) {
+	skipIfNoGit(t)
+
+	umbrella, _ := setupTrackedWorkspaceRepo(t, "svc-status-v2-ui")
+
+	oldDetector := pagerTerminalDetector
+	oldStdin := pagerStdin
+	oldRunner := statusTUIRunner
+	t.Cleanup(func() {
+		pagerTerminalDetector = oldDetector
+		pagerStdin = oldStdin
+		statusTUIRunner = oldRunner
+	})
+
+	pagerTerminalDetector = func(io.Writer) bool { return true }
+	stdinFile, err := os.CreateTemp(t.TempDir(), "status-stdin")
+	if err != nil {
+		t.Fatalf("CreateTemp stdin: %v", err)
+	}
+	defer stdinFile.Close()
+	pagerStdin = stdinFile
+
+	stdoutFile, err := os.CreateTemp(t.TempDir(), "status-stdout")
+	if err != nil {
+		t.Fatalf("CreateTemp stdout: %v", err)
+	}
+	defer stdoutFile.Close()
+
+	called := false
+	statusTUIRunner = func(title string, entries []uiModel.RepositoryEntry, in *os.File, out *os.File) error {
+		called = true
+		if title != "gyat status" {
+			t.Fatalf("title = %q, want gyat status", title)
+		}
+		if len(entries) != 2 {
+			t.Fatalf("entries len = %d, want 2", len(entries))
+		}
+		if in != stdinFile || out != stdoutFile {
+			t.Fatal("unexpected TUI files passed to runner")
+		}
+		return nil
+	}
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(stdoutFile)
+	cmd.SetErr(io.Discard)
+
+	if err := runStatus(umbrella, cmd, nil); err != nil {
+		t.Fatalf("runStatus: %v", err)
+	}
+	if !called {
+		t.Fatal("expected status TUI runner to be used")
+	}
+}
+
+func TestRunStatus_NoUIDisablesInteractiveTUI(t *testing.T) {
+	skipIfNoGit(t)
+
+	umbrella, _ := setupTrackedWorkspaceRepo(t, "svc-status-v2-no-ui")
+
+	oldDetector := pagerTerminalDetector
+	oldStdin := pagerStdin
+	oldRunner := statusTUIRunner
+	t.Cleanup(func() {
+		pagerTerminalDetector = oldDetector
+		pagerStdin = oldStdin
+		statusTUIRunner = oldRunner
+	})
+
+	pagerTerminalDetector = func(io.Writer) bool { return true }
+	stdinFile, err := os.CreateTemp(t.TempDir(), "status-stdin")
+	if err != nil {
+		t.Fatalf("CreateTemp stdin: %v", err)
+	}
+	defer stdinFile.Close()
+	pagerStdin = stdinFile
+
+	called := false
+	statusTUIRunner = func(string, []uiModel.RepositoryEntry, *os.File, *os.File) error {
+		called = true
+		return nil
+	}
+
+	var stdout bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&stdout)
+	cmd.SetErr(io.Discard)
+	cmd.Flags().Bool(noPagerFlagName, false, "")
+
+	if err := runStatusWithFlags(umbrella, workspaceTargetFlags{noUI: true}, cmd, nil); err != nil {
+		t.Fatalf("runStatusWithFlags: %v", err)
+	}
+	if called {
+		t.Fatal("expected --no-ui to bypass status TUI runner")
+	}
+	if !strings.Contains(stdout.String(), "svc-status-v2-no-ui") {
+		t.Fatalf("expected plain-text status output, got:\n%s", stdout.String())
 	}
 }

@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Repository Status",
+  "type": "object",
+  "properties": {
+    "repo_id": { "type": "string" },
+    "tabs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "title": { "type": "string" },
+          "content": { "type": ["string","object"] }
+        },
+        "required": ["id","title"]
+      }
+    },
+    "active_tab": { "type": "string" }
+  },
+  "required": ["repo_id","tabs","active_tab"]
+}

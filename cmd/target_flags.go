@@ -15,6 +15,7 @@ type workspaceTargetFlags struct {
 	rootOnly        bool
 	parallel        bool
 	continueOnError bool
+	noUI            bool
 }
 
 var sharedTargetFlags workspaceTargetFlags
@@ -25,6 +26,7 @@ func bindWorkspaceTargetFlags(command *cobra.Command) {
 	command.PersistentFlags().BoolVar(&sharedTargetFlags.noRoot, "no-root", false, "Exclude the umbrella repository from execution")
 	command.PersistentFlags().BoolVar(&sharedTargetFlags.rootOnly, "root-only", false, "Run only in the umbrella repository")
 	command.PersistentFlags().BoolVar(&sharedTargetFlags.continueOnError, "continue-on-error", false, "Continue running in remaining targets after a failure")
+	command.PersistentFlags().BoolVar(&sharedTargetFlags.noUI, "no-ui", false, "Disable the interactive terminal UI and print plain-text output")
 }
 
 func bindWorkspaceParallelFlag(command *cobra.Command) {

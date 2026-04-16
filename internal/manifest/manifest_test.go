@@ -144,3 +144,43 @@ func TestValidateRejectsAbsoluteRepoPath(t *testing.T) {
 		t.Fatalf("SaveDir error = %v, want relative path validation", err)
 	}
 }
+
+func TestOrderReposByManifestPreservesManifestOrder(t *testing.T) {
+	t.Parallel()
+
+	file := File{
+		Version: SupportedVersion,
+		Repos: []Repo{
+			{Name: "auth", Path: "services/auth", URL: "git@example.com:auth.git"},
+			{Name: "billing", Path: "services/billing", URL: "git@example.com:billing.git"},
+		},
+	}
+
+	ordered := OrderReposByManifest(file, []Repo{
+		{Name: "billing", Path: "services/billing", URL: "git@example.com:billing.git"},
+		{Name: "auth", Path: "services/auth", URL: "git@example.com:auth.git"},
+	})
+
+	if len(ordered) != 2 {
+		t.Fatalf("ordered len = %d, want 2", len(ordered))
+	}
+	if ordered[0].Path != "services/auth" || ordered[1].Path != "services/billing" {
+		t.Fatalf("unexpected order: %#v", ordered)
+	}
+}
+
+func TestOrderReposByManifestFallsBackToLexicographicPathOrder(t *testing.T) {
+	t.Parallel()
+
+	ordered := OrderReposByManifest(Default(), []Repo{
+		{Name: "zeta", Path: "services/zeta", URL: "git@example.com:zeta.git"},
+		{Name: "alpha", Path: "services/alpha", URL: "git@example.com:alpha.git"},
+	})
+
+	if len(ordered) != 2 {
+		t.Fatalf("ordered len = %d, want 2", len(ordered))
+	}
+	if ordered[0].Path != "services/alpha" || ordered[1].Path != "services/zeta" {
+		t.Fatalf("unexpected order: %#v", ordered)
+	}
+}
