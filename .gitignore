@@ -107,11 +107,3 @@ tmp/
 
 # ensure this file itself remains tracked
 !.gitignore
-
-# Agentic specific files
-!.opencode/command/
-
-# Spec-kit specific files
-.specify/extensions
-detect-output.json
-detect-raw.txt
