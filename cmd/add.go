@@ -96,6 +96,8 @@ func runAddWithoutFlags(startDir, dir string, cmd *cobra.Command, args []string)
 	return runAdd(startDir, dir, workspaceTargetFlags{}, cmd, args)
 }
 
+// runAddWorkspace determines which staging strategy to use based on whether
+// target flags are provided, and routes to the appropriate handler.
 func runAddWorkspace(ws workspace.Workspace, startDir string, flags workspaceTargetFlags, cmd *cobra.Command, args []string) error {
 	if flags.hasSelection() {
 		return stageSelectedWorkspace(ws, flags, cmd, args)
@@ -109,6 +111,8 @@ func runAddWorkspace(ws workspace.Workspace, startDir string, flags workspaceTar
 	return stageTargetedWorkspace(ws, startDir, args, flags.runOptions(), cmd)
 }
 
+// stageAllWorkspace stages all changes in the entire workspace: the umbrella root
+// and all tracked repos. It uses git add -A to stage everything.
 func stageAllWorkspace(ws workspace.Workspace, options workspace.RunOptions, cmd *cobra.Command) error {
 	targets, err := ws.ResolveTargets(workspace.TargetOptions{IncludeRoot: true})
 	if err != nil {
@@ -185,6 +189,8 @@ func stageAllWorkspace(ws workspace.Workspace, options workspace.RunOptions, cmd
 	return failures.err("staging failed")
 }
 
+// stageSelectedWorkspace stages changes in repos explicitly selected via
+// --repo, --group, or similar target flags.
 func stageSelectedWorkspace(ws workspace.Workspace, flags workspaceTargetFlags, cmd *cobra.Command, args []string) error {
 	targets, err := ws.ResolveTargets(flags.targetOptions(true, nil))
 	if err != nil {
@@ -252,6 +258,9 @@ func stageSelectedWorkspace(ws workspace.Workspace, flags workspaceTargetFlags, 
 
 	return failures.err("staging failed")
 }
+// stageTargetedWorkspace stages changes for specific paths provided as arguments.
+// It classifies each path as either belonging to the umbrella root or to a
+// specific tracked repo, then stages the appropriate files in each location.
 func stageTargetedWorkspace(ws workspace.Workspace, startDir string, args []string, options workspace.RunOptions, cmd *cobra.Command) error {
 	rootArgs, repoTargets, err := classifyWorkspaceArgs(ws.RootDir, ws.Manifest.Repos, startDir, args)
 	if err != nil {
@@ -328,6 +337,9 @@ func stageTargetedWorkspace(ws workspace.Workspace, startDir string, args []stri
 	return failures.err("staging failed")
 }
 
+// classifyWorkspaceArgs classifies the given arguments into paths that belong
+// to the umbrella root and paths that belong to tracked repos. It returns the
+// root paths, a map of repo paths to their staging instructions, and any error.
 func classifyWorkspaceArgs(root string, repos []manifest.Repo, startDir string, args []string) (rootArgs []string, repoTargets map[string]*repoStage, err error) {
 	repoTargets = make(map[string]*repoStage)
 
@@ -365,6 +377,8 @@ func classifyWorkspaceArgs(root string, repos []manifest.Repo, startDir string, 
 	return rootArgs, repoTargets, nil
 }
 
+// normalizeWorkspaceArg resolves a path argument to be relative to the workspace
+// root, validating that it doesn't escape the workspace boundary.
 func normalizeWorkspaceArg(root, startDir, arg string) (string, error) {
 	arg = strings.TrimSpace(arg)
 	if arg == "" {
@@ -394,6 +408,9 @@ func normalizeWorkspaceArg(root, startDir, arg string) (string, error) {
 	return rel, nil
 }
 
+// matchTrackedRepo checks if the given argument matches a tracked repo path.
+// It returns the matched repo path, the remaining relative path (if any),
+// whether to stage all files in the repo, and whether a match was found.
 func matchTrackedRepo(repos []manifest.Repo, arg string) (repoPath, repoArg string, stageAll bool, matched bool) {
 	bestLen := -1
 
