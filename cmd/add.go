@@ -103,6 +103,7 @@ func runAddWorkspace(ws workspace.Workspace, startDir string, flags workspaceTar
 		return stageSelectedWorkspace(ws, flags, cmd, args)
 	}
 
+	// Strictly treat "." and "./" as "stage all" rather than falling back on stageTargetedWorkspace.
 	isStageAll := len(args) == 0 || (len(args) == 1 && (args[0] == "." || args[0] == "./"))
 
 	if isStageAll {
@@ -258,6 +259,7 @@ func stageSelectedWorkspace(ws workspace.Workspace, flags workspaceTargetFlags, 
 
 	return failures.err("staging failed")
 }
+
 // stageTargetedWorkspace stages changes for specific paths provided as arguments.
 // It classifies each path as either belonging to the umbrella root or to a
 // specific tracked repo, then stages the appropriate files in each location.
