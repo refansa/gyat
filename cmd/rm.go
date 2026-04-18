@@ -51,7 +51,7 @@ removed from the umbrella repository itself.`,
 		if err != nil {
 			return err
 		}
-		return runRmWithFlagsFrom(startDir, dir, sharedTargetFlags, rmCached, rmForce, rmRecursive, cmd, args)
+		return runRm(startDir, dir, sharedTargetFlags, rmCached, rmForce, rmRecursive, cmd, args)
 	},
 }
 
@@ -74,15 +74,9 @@ func buildRmArgs(cached, force, recursive bool, files []string) []string {
 
 // runRm removes files from the working tree and index. It routes each path to
 // the repository it belongs to.
-func runRm(dir string, cached, force, recursive bool, cmd *cobra.Command, args []string) error {
-	return runRmWithFlagsFrom(dir, dir, workspaceTargetFlags{}, cached, force, recursive, cmd, args)
-}
-
-func runRmFrom(startDir, dir string, cached, force, recursive bool, cmd *cobra.Command, args []string) error {
-	return runRmWithFlagsFrom(startDir, dir, workspaceTargetFlags{}, cached, force, recursive, cmd, args)
-}
-
-func runRmWithFlagsFrom(startDir, dir string, flags workspaceTargetFlags, cached, force, recursive bool, cmd *cobra.Command, args []string) error {
+// runRm is the primary implementation that accepts an explicit start
+// directory and explicit workspace flags.
+func runRm(startDir, dir string, flags workspaceTargetFlags, cached, force, recursive bool, cmd *cobra.Command, args []string) error {
 	_ = dir
 	ws, err := workspace.Load(startDir)
 	if err != nil {
@@ -92,6 +86,10 @@ func runRmWithFlagsFrom(startDir, dir string, flags workspaceTargetFlags, cached
 		return removeSelectedWorkspaceTargets(ws, flags, cached, force, recursive, cmd, args)
 	}
 	return runRmWorkspace(ws, startDir, flags, cached, force, recursive, cmd, args)
+}
+
+func runRmWithoutFlags(startDir, dir string, cached, force, recursive bool, cmd *cobra.Command, args []string) error {
+	return runRm(startDir, dir, workspaceTargetFlags{}, cached, force, recursive, cmd, args)
 }
 
 func runRmWorkspace(ws workspace.Workspace, startDir string, flags workspaceTargetFlags, cached, force, recursive bool, cmd *cobra.Command, args []string) error {
@@ -219,6 +217,7 @@ func removeSelectedWorkspaceTargets(ws workspace.Workspace, flags workspaceTarge
 }
 
 func init() {
+	bindWorkspaceTargetFlags(rmCmd)
 	bindWorkspaceParallelFlag(rmCmd)
 	rmCmd.Flags().BoolVar(&rmCached, "cached", false, "Use this option to unstage and remove paths only from the index")
 	rmCmd.Flags().BoolVarP(&rmForce, "force", "f", false, "Override the up-to-date check")

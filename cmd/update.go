@@ -35,19 +35,13 @@ tracking branch.`,
 		if err != nil {
 			return err
 		}
-		return runUpdateWithFlagsFrom(startDir, dir, sharedTargetFlags, cmd, args)
+		return runUpdate(startDir, dir, sharedTargetFlags, cmd, args)
 	},
 }
 
-func runUpdate(dir string, cmd *cobra.Command, args []string) error {
-	return runUpdateWithFlagsFrom(dir, dir, workspaceTargetFlags{}, cmd, args)
-}
-
-func runUpdateFrom(startDir, dir string, cmd *cobra.Command, args []string) error {
-	return runUpdateWithFlagsFrom(startDir, dir, workspaceTargetFlags{}, cmd, args)
-}
-
-func runUpdateWithFlagsFrom(startDir, dir string, flags workspaceTargetFlags, cmd *cobra.Command, args []string) error {
+// runUpdate is the primary implementation that accepts an explicit start
+// directory and explicit workspace flags.
+func runUpdate(startDir, dir string, flags workspaceTargetFlags, cmd *cobra.Command, args []string) error {
 	_ = dir
 	ws, err := workspace.Load(startDir)
 	if err != nil {
@@ -120,4 +114,14 @@ func runUpdateWithFlagsFrom(startDir, dir string, flags workspaceTargetFlags, cm
 	}
 
 	return failures.err("update failed")
+}
+
+// runUpdateWithoutFlags runs update using default (empty) workspace flags.
+func runUpdateWithoutFlags(startDir, dir string, cmd *cobra.Command, args []string) error {
+	return runUpdate(startDir, dir, workspaceTargetFlags{}, cmd, args)
+}
+
+func init() {
+	bindWorkspaceTargetFlags(updateCmd)
+	bindWorkspaceParallelFlag(updateCmd)
 }

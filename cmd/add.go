@@ -55,7 +55,7 @@ belongs to:
 		if err != nil {
 			return err
 		}
-		return runAddWithFlagsFrom(startDir, dir, sharedTargetFlags, cmd, args)
+		return runAdd(startDir, dir, sharedTargetFlags, cmd, args)
 	},
 }
 
@@ -73,27 +73,27 @@ type stageTargetResult struct {
 }
 
 func init() {
+	bindWorkspaceTargetFlags(addCmd)
 	bindWorkspaceParallelFlag(addCmd)
 }
 
 // runAdd stages changes in the umbrella repository and/or tracked repos.
 // With no args it stages everything in the workspace. With args it routes each
 // path to the repository it belongs to.
-func runAdd(dir string, cmd *cobra.Command, args []string) error {
-	return runAddWithFlagsFrom(dir, dir, workspaceTargetFlags{}, cmd, args)
-}
-
-func runAddFrom(startDir, dir string, cmd *cobra.Command, args []string) error {
-	return runAddWithFlagsFrom(startDir, dir, workspaceTargetFlags{}, cmd, args)
-}
-
-func runAddWithFlagsFrom(startDir, dir string, flags workspaceTargetFlags, cmd *cobra.Command, args []string) error {
+func runAdd(startDir, dir string, flags workspaceTargetFlags, cmd *cobra.Command, args []string) error {
 	_ = dir
 	ws, err := workspace.Load(startDir)
 	if err != nil {
 		return err
 	}
 	return runAddWorkspace(ws, startDir, flags, cmd, args)
+}
+
+// runAddWithoutFlags runs the add logic using default (empty) workspace flags.
+//
+// this is only used for tests.
+func runAddWithoutFlags(startDir, dir string, cmd *cobra.Command, args []string) error {
+	return runAdd(startDir, dir, workspaceTargetFlags{}, cmd, args)
 }
 
 func runAddWorkspace(ws workspace.Workspace, startDir string, flags workspaceTargetFlags, cmd *cobra.Command, args []string) error {

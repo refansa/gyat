@@ -53,7 +53,7 @@ repo. Workspace-root paths commit the umbrella repository.`,
 		if err != nil {
 			return err
 		}
-		return runCommitWithFlagsFrom(startDir, dir, sharedTargetFlags, commitMessage, commitNoVerify, cmd, args)
+		return runCommit(startDir, dir, sharedTargetFlags, commitMessage, commitNoVerify, cmd, args)
 	},
 }
 
@@ -87,21 +87,21 @@ func buildCommitArgs(message string, noVerify bool) []string {
 // runCommit commits staged changes in targeted repositories and/or the
 // umbrella repository. The function signature mirrors runTrack so that tests
 // can invoke it directly without touching global flag state.
-func runCommit(dir, message string, noVerify bool, cmd *cobra.Command, args []string) error {
-	return runCommitWithFlagsFrom(dir, dir, workspaceTargetFlags{}, message, noVerify, cmd, args)
-}
-
-func runCommitFrom(startDir, dir, message string, noVerify bool, cmd *cobra.Command, args []string) error {
-	return runCommitWithFlagsFrom(startDir, dir, workspaceTargetFlags{}, message, noVerify, cmd, args)
-}
-
-func runCommitWithFlagsFrom(startDir, dir string, flags workspaceTargetFlags, message string, noVerify bool, cmd *cobra.Command, args []string) error {
+// runCommit is the primary implementation that accepts an explicit start
+// directory and explicit workspace flags. Callers (including CLI RunE) should
+// use this function to execute the command with a provided context.
+func runCommit(startDir, dir string, flags workspaceTargetFlags, message string, noVerify bool, cmd *cobra.Command, args []string) error {
 	_ = dir
 	ws, err := workspace.Load(startDir)
 	if err != nil {
 		return err
 	}
 	return runCommitWorkspace(ws, startDir, flags, message, noVerify, cmd, args)
+}
+
+// runCommitWithoutFlags runs the commit logic using default (empty) flags.
+func runCommitWithoutFlags(startDir, dir, message string, noVerify bool, cmd *cobra.Command, args []string) error {
+	return runCommit(startDir, dir, workspaceTargetFlags{}, message, noVerify, cmd, args)
 }
 
 func runCommitWorkspace(ws workspace.Workspace, startDir string, flags workspaceTargetFlags, message string, noVerify bool, cmd *cobra.Command, args []string) error {
@@ -247,4 +247,6 @@ func commitArgSelectsRoot(root, rel, arg string) bool {
 func init() {
 	commitCmd.Flags().StringVarP(&commitMessage, "message", "m", "", "Commit message (required)")
 	commitCmd.Flags().BoolVar(&commitNoVerify, "no-verify", false, "Bypass git hooks")
+	bindWorkspaceTargetFlags(commitCmd)
+	bindWorkspaceParallelFlag(commitCmd)
 }

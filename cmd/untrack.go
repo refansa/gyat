@@ -15,6 +15,7 @@ type untrackTargetResult struct {
 }
 
 func init() {
+	bindWorkspaceTargetFlags(untrackCmd)
 	bindWorkspaceParallelFlag(untrackCmd)
 }
 

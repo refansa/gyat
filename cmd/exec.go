@@ -90,3 +90,8 @@ func printExecResults(out io.Writer, results []workspace.RunResult) {
 		}
 	}
 }
+
+func init() {
+	bindWorkspaceTargetFlags(execCmd)
+	bindWorkspaceParallelFlag(execCmd)
+}

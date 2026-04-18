@@ -42,27 +42,25 @@ then the umbrella repository.`,
 		if err != nil {
 			return err
 		}
-		return runPushWithFlagsFrom(startDir, dir, sharedTargetFlags, pushForce, cmd, args)
+		return runPush(startDir, dir, sharedTargetFlags, pushForce, cmd, args)
 	},
 }
 
 // runPush pushes local commits for the selected tracked repos and, if a
 // remote is configured, the umbrella repository itself.
-func runPush(dir string, force bool, cmd *cobra.Command, args []string) error {
-	return runPushWithFlagsFrom(dir, dir, workspaceTargetFlags{}, force, cmd, args)
-}
-
-func runPushFrom(startDir, dir string, force bool, cmd *cobra.Command, args []string) error {
-	return runPushWithFlagsFrom(startDir, dir, workspaceTargetFlags{}, force, cmd, args)
-}
-
-func runPushWithFlagsFrom(startDir, dir string, flags workspaceTargetFlags, force bool, cmd *cobra.Command, args []string) error {
+// runPush is the primary implementation that accepts an explicit start
+// directory and explicit workspace flags.
+func runPush(startDir, dir string, flags workspaceTargetFlags, force bool, cmd *cobra.Command, args []string) error {
 	_ = dir
 	ws, err := workspace.Load(startDir)
 	if err != nil {
 		return err
 	}
 	return runPushWorkspace(ws, startDir, flags, force, cmd, args)
+}
+
+func runPushWithoutFlags(startDir, dir string, force bool, cmd *cobra.Command, args []string) error {
+	return runPush(startDir, dir, workspaceTargetFlags{}, force, cmd, args)
 }
 
 func runPushWorkspace(ws workspace.Workspace, startDir string, flags workspaceTargetFlags, force bool, cmd *cobra.Command, args []string) error {
@@ -139,5 +137,7 @@ func hasRemote(dir string) bool {
 }
 
 func init() {
+	bindWorkspaceTargetFlags(pushCmd)
+	bindWorkspaceParallelFlag(pushCmd)
 	pushCmd.Flags().BoolVarP(&pushForce, "force", "f", false, "Force push (use with care — rewrites remote history)")
 }

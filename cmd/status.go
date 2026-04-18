@@ -107,6 +107,7 @@ var asciiStatusRenderStyle = statusRenderStyle{
 }
 
 func init() {
+	bindWorkspaceTargetFlags(statusCmd)
 	bindWorkspaceParallelFlag(statusCmd)
 	bindNoPagerFlag(statusCmd)
 	bindChangedOnlyFlag(statusCmd)

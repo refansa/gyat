@@ -47,27 +47,25 @@ fetch the latest remote commit for a detached repository.`,
 		if err != nil {
 			return err
 		}
-		return runPullWithFlagsFrom(startDir, dir, sharedTargetFlags, pullRebase, cmd, args)
+		return runPull(startDir, dir, sharedTargetFlags, pullRebase, cmd, args)
 	},
 }
 
 // runPull pulls the latest commits for the selected tracked repos and, if an
 // upstream is configured, the umbrella repository itself.
-func runPull(dir string, rebase bool, cmd *cobra.Command, args []string) error {
-	return runPullWithFlagsFrom(dir, dir, workspaceTargetFlags{}, rebase, cmd, args)
-}
-
-func runPullFrom(startDir, dir string, rebase bool, cmd *cobra.Command, args []string) error {
-	return runPullWithFlagsFrom(startDir, dir, workspaceTargetFlags{}, rebase, cmd, args)
-}
-
-func runPullWithFlagsFrom(startDir, dir string, flags workspaceTargetFlags, rebase bool, cmd *cobra.Command, args []string) error {
+// runPull is the primary implementation that accepts an explicit start
+// directory and explicit workspace flags.
+func runPull(startDir, dir string, flags workspaceTargetFlags, rebase bool, cmd *cobra.Command, args []string) error {
 	_ = dir
 	ws, err := workspace.Load(startDir)
 	if err != nil {
 		return err
 	}
 	return runPullWorkspace(ws, startDir, flags, rebase, cmd, args)
+}
+
+func runPullWithoutFlags(startDir, dir string, rebase bool, cmd *cobra.Command, args []string) error {
+	return runPull(startDir, dir, workspaceTargetFlags{}, rebase, cmd, args)
 }
 
 func runPullWorkspace(ws workspace.Workspace, startDir string, flags workspaceTargetFlags, rebase bool, cmd *cobra.Command, args []string) error {
@@ -201,5 +199,7 @@ func hasUpstream(dir string) bool {
 }
 
 func init() {
+	bindWorkspaceTargetFlags(pullCmd)
+	bindWorkspaceParallelFlag(pullCmd)
 	pullCmd.Flags().BoolVarP(&pullRebase, "rebase", "r", false, "Rebase instead of merge when pulling")
 }

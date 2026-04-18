@@ -242,4 +242,7 @@ func validateTrackedPath(path string) error {
 
 func init() {
 	trackCmd.Flags().StringVarP(&trackBranch, "branch", "b", "", "Branch of the repository to clone and record")
+	// track command does not support workspace selection flags; validateUnsupported
+	// is still called at runtime to enforce this. We don't bind the shared
+	// flags here to avoid exposing them for `gyat track`.
 }

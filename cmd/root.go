@@ -39,7 +39,7 @@ func init() {
 			}
 		}
 	}
+
 	rootCmd.Version = Version
-	bindWorkspaceTargetFlags(rootCmd)
 	registerBuiltins(rootCmd)
 }

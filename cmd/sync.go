@@ -17,6 +17,7 @@ type syncTargetResult struct {
 }
 
 func init() {
+	bindWorkspaceTargetFlags(syncCmd)
 	bindWorkspaceParallelFlag(syncCmd)
 }
 
@@ -40,19 +41,13 @@ renamed) and you need local clones to point to the new location.
 		if err != nil {
 			return err
 		}
-		return runSyncWithFlagsFrom(startDir, dir, sharedTargetFlags, cmd, args)
+		return runSync(startDir, dir, sharedTargetFlags, cmd, args)
 	},
 }
 
-func runSync(dir string, cmd *cobra.Command, args []string) error {
-	return runSyncWithFlagsFrom(dir, dir, workspaceTargetFlags{}, cmd, args)
-}
-
-func runSyncFrom(startDir, dir string, cmd *cobra.Command, args []string) error {
-	return runSyncWithFlagsFrom(startDir, dir, workspaceTargetFlags{}, cmd, args)
-}
-
-func runSyncWithFlagsFrom(startDir, dir string, flags workspaceTargetFlags, cmd *cobra.Command, args []string) error {
+// runSync is the primary implementation that accepts an explicit start
+// directory and explicit workspace flags.
+func runSync(startDir, dir string, flags workspaceTargetFlags, cmd *cobra.Command, args []string) error {
 	_ = dir
 	ws, err := workspace.Load(startDir)
 	if err != nil {
@@ -173,6 +168,10 @@ func runSyncWithFlagsFrom(startDir, dir string, flags workspaceTargetFlags, cmd 
 	}
 
 	return failures.err("sync failed")
+}
+
+func runSyncWithoutFlags(startDir, dir string, cmd *cobra.Command, args []string) error {
+	return runSync(startDir, dir, workspaceTargetFlags{}, cmd, args)
 }
 
 func resolveManifestRepoURL(root, repoURL string) (string, error) {

@@ -23,6 +23,7 @@ type repoInfo struct {
 }
 
 func init() {
+	bindWorkspaceTargetFlags(listCmd)
 	bindWorkspaceParallelFlag(listCmd)
 }
 
