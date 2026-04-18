@@ -100,7 +100,10 @@ func runAddWorkspace(ws workspace.Workspace, startDir string, flags workspaceTar
 	if flags.hasSelection() {
 		return stageSelectedWorkspace(ws, flags, cmd, args)
 	}
-	if len(args) == 0 {
+
+	isStageAll := len(args) == 0 || (len(args) == 1 && (args[0] == "." || args[0] == "./"))
+
+	if isStageAll {
 		return stageAllWorkspace(ws, flags.runOptions(), cmd)
 	}
 	return stageTargetedWorkspace(ws, startDir, args, flags.runOptions(), cmd)

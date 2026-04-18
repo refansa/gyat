@@ -1,3 +1,6 @@
+# This script always reinitializes the test workspace from a clean state.
+# Any existing tmp/gyat-test directory will be removed and recreated.
+
 $ErrorActionPreference = "Stop"
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -9,6 +12,9 @@ $TestDir = Join-Path $ProjectRoot "tmp\gyat-test"
 Write-Host "Building gyat..."
 New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
 go build -o $GyatBin .
+
+Write-Host "Cleaning up existing test directory..."
+Remove-Item -Recurse -Force "$TestDir" -ErrorAction SilentlyContinue
 
 Write-Host "Creating test umbrella repository at $TestDir..."
 
@@ -25,6 +31,9 @@ git -C "$TestDir\services\api" init --quiet
 git -C "$TestDir\services\web" init --quiet
 
 git init "$TestDir" --quiet
+
+# Add services to .gitignore (source repos to track, not commit)
+"/services" | Out-File -FilePath "$TestDir\.gitignore" -Append -Encoding utf8
 
 Write-Host "Initializing gyat workspace..."
 Push-Location $TestDir

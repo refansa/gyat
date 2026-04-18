@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
 
+# This script always reinitializes the test workspace from a clean state.
+# Any existing tmp/gyat-test directory will be removed and recreated.
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BIN_DIR="$PROJECT_ROOT/bin"
@@ -10,6 +13,9 @@ TEST_DIR="$PROJECT_ROOT/tmp/gyat-test"
 echo "Building gyat..."
 mkdir -p "$BIN_DIR"
 go build -o "$GYAT_BIN" .
+
+echo "Cleaning up existing test directory..."
+rm -rf "$TEST_DIR"
 
 echo "Creating test umbrella repository at $TEST_DIR..."
 
@@ -26,6 +32,9 @@ git init "$TEST_DIR/services/api" --quiet
 git init "$TEST_DIR/services/web" --quiet
 
 git init "$TEST_DIR" --quiet
+
+# Add services to .gitignore (source repos to track, not commit)
+echo "/services" >> "$TEST_DIR/.gitignore"
 
 echo "Initializing gyat workspace..."
 (cd "$TEST_DIR" && "$GYAT_BIN" init)
