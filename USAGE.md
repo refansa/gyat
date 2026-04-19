@@ -99,75 +99,6 @@ gyat exec --repo auth --no-root -- git rev-parse --abbrev-ref HEAD
 want is not built in, start here. `exec` currently runs targets in resolved
 order and prints one output block per target.
 
-### `gyat add`
-
-Stage changes across the workspace.
-
-```sh
-# Stage everything in the umbrella root and every cloned tracked repo
-gyat add
-
-# Stage a root file
-gyat add .gitignore
-
-# Stage all changes inside one tracked repo
-gyat add services/auth
-
-# Stage one file inside a tracked repo
-gyat add services/auth/handler.go
-
-# Stage the same path inside selected repos
-gyat add --repo services/auth --repo services/billing go.mod
-```
-
-Without selector flags, `add` routes each path to the repository that owns it.
-With selector flags, the supplied path arguments are applied inside each
-selected target.
-
-### `gyat commit`
-
-Commit staged changes across selected repos and the umbrella repository with the
-same message.
-
-```sh
-# Commit staged changes everywhere they exist
-gyat commit -m "feat: add login endpoint"
-
-# Commit only selected tracked repos
-gyat commit -m "fix: typo" services/auth services/billing
-
-# Commit only the umbrella repository
-gyat commit -m "chore: update workspace docs" --root-only
-
-# Skip git hooks
-gyat commit -m "wip" --no-verify
-```
-
-With no path arguments, gyat commits every tracked repo that currently has
-staged changes and then commits the umbrella repository if it also has staged
-changes. Root paths or `--root-only` can be used to commit the umbrella
-repository by itself. `commit` currently walks selected targets in deterministic
-order.
-
-### `gyat pull` and `gyat push`
-
-Pull or push selected workspace targets.
-
-```sh
-# Pull everything that has an upstream
-gyat pull
-
-# Pull only backend repos, excluding the umbrella root
-gyat pull --group backend --no-root
-
-# Push just the auth repo
-gyat push --repo auth --no-root
-```
-
-Tracked repos that use a local-path remote are skipped with a hint, since there
-is no portable remote to pull from or push to. `pull` and `push` currently walk
-selected targets in deterministic order.
-
 ### `gyat update`
 
 Fast-forward tracked repos to the latest commit on their configured branch.
@@ -202,25 +133,6 @@ gyat sync --repo auth --no-root
 
 `sync` updates `origin` URLs, clones tracked repos that are missing on disk, and
 reconciles the gyat-managed block in the umbrella root `.gitignore`.
-
-### `gyat rm`
-
-Remove files from the working tree and index across the workspace.
-
-```sh
-# Remove a root file
-gyat rm .gitignore
-
-# Remove a file inside a tracked repo
-gyat rm services/auth/handler.go
-
-# Remove a shared file across selected repos
-gyat rm --repo services/auth --repo services/billing generated.lock
-```
-
-`rm` is workspace-aware, so paths are routed to the repo that owns them unless
-selector flags are used. To remove an entire tracked repository from the
-workspace, use `gyat untrack` instead.
 
 ### `gyat untrack`
 

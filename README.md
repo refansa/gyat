@@ -34,7 +34,7 @@ these repositories usually need to get their act together.
 
 - Aggregate multiple related repositories under one workspace
 - Keep each child repository a normal git repository
-- Simplify common multi-repo workflows like `track`, `exec`, `add`, `commit`, `pull`, `push`, `update`, `sync`, and `list`
+- Simplify common multi-repo workflows like `track`, `exec`, `status`, `sync`, and `update`
 - Stay thin on top of git rather than replacing it
 - Make target selection predictable with repo, group, and root selectors
 
@@ -119,12 +119,7 @@ Some workspace-aware commands also expose `--parallel` when parallel fan-out
 is a good fit for that command. Treat `--parallel` as command-specific rather
 than universal; each command's help text is the source of truth.
 
-These flags are used by commands such as `exec`, `status`, `list`, `add`,
-`commit`, `pull`, `push`, `update`, `sync`, `rm`, and `untrack`. Commands keep
-their own default root behavior: for example, `status`, `pull`, `push`, `sync`,
-and `exec` include the umbrella root by default, while `list` and `update` do
-not. `init` and `track` reject these flags, and `untrack` does not support
-`--root-only`.
+These flags are used by commands such as `exec`, `status`, `sync`, `list`, `update`, and `untrack`. Commands keep their own default root behavior: for example, `status`, `sync`, `list`, and `exec` include the umbrella root by default, while `update` does not. `init` and `track` reject these flags, and `untrack` does not support `--root-only`.
 
 ## Usage
 
@@ -137,7 +132,7 @@ library. The workspace model lives in `.gyat`, and git operations are delegated
 to `internal/git`:
 
 - `git.Run(...)` captures stdout and returns `(string, error)`. It is used when output must be parsed, such as `git status`, branch detection, or remote configuration.
-- `git.RunInteractive(...)` passes stdin/stdout/stderr through directly for commands that should stream live output, such as `pull`, `push`, and `update`.
+- `git.RunInteractive(...)` passes stdin/stdout/stderr through directly for commands that should stream live output, such as `update`.
 
 Ordered fan-out and optional parallel execution live in `internal/workspace`.
 Only commands that opt into `--parallel` expose it.

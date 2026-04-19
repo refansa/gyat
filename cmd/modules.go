@@ -21,17 +21,12 @@ type builtinModule struct{}
 func (builtinModule) Register(root *cobra.Command) {
 	root.AddCommand(initCmd)
 	root.AddCommand(execCmd)
-	root.AddCommand(trackCmd)
-	root.AddCommand(addCmd)
-	root.AddCommand(untrackCmd)
-	root.AddCommand(updateCmd)
-	root.AddCommand(listCmd)
-	root.AddCommand(commitCmd)
-	root.AddCommand(syncCmd)
-	root.AddCommand(pullCmd)
-	root.AddCommand(pushCmd)
-	root.AddCommand(rmCmd)
 	root.AddCommand(statusCmd)
+	root.AddCommand(syncCmd)
+	root.AddCommand(updateCmd)
+	root.AddCommand(trackCmd)
+	root.AddCommand(untrackCmd)
+	root.AddCommand(listCmd)
 }
 
 // registerBuiltins constructs a Registry containing the builtin module and

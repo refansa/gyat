@@ -19,8 +19,22 @@
 gyat --help          # Show all commands
 gyat init            # Initialize workspace
 gyat track <path>    # Track a child repo
+gyat untrack <path>   # Remove tracked repo
 gyat exec -- git status  # Run git across all repos
+gyat status           # Show working tree status
+gyat sync            # Sync tracked repo remotes
+gyat update           # Update tracked repos
 ```
+
+## Available Commands
+
+These 8 commands are exposed. Other git operations can be replicated via `exec`:
+
+- `gyat exec -- git add .` (replaces `add`)
+- `gyat exec -- git commit -m "msg"` (replaces `commit`)
+- `gyat exec -- git pull` (replaces `pull`)
+- `gyat exec -- git push` (replaces `push`)
+- `gyat exec -- git rm` (replaces `rm`)
 
 ## Notes
 
