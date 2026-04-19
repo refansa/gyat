@@ -1,7 +1,7 @@
 # This script always reinitializes the test workspace from a clean state.
 # Any existing tmp/gyat-test directory will be removed and recreated.
 #
-# This is intended for testing commands that require a staged workspace, such as `gyat commit`.
+# This script initialize a minimal re-creation of repositories with staged files.
 
 $ErrorActionPreference = "Stop"
 

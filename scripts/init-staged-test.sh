@@ -1,6 +1,8 @@
 #!/bin/bash
 # This script always reinitializes the test workspace from a clean state.
 # Any existing tmp/gyat-test directory will be removed and recreated.
+#
+# This script initialize a minimal re-creation of repositories with staged files.
 
 set -e
 
